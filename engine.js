@@ -11,8 +11,7 @@ window.TrainingEngine = (() => {
     if(!step)return null;
     const [criterion,stepPrompt,stepAnswers]=step;
     const clues=clueIdsFor(session);
-    const spokenContext=[session.context.prompt,...session.answers.map(answer=>answer.reply||'')].join(' ');
-    const companyDisclosed=clues.has('C5')||/(^|[^а-яё])(?:супруг(?:а|у|ом|е)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(spokenContext);
+    const companyDisclosed=/(^|[^а-яё])(?:супруг(?:а|у|ом|е|ой)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(session.lastClientReply||'');
     let prompt=stepPrompt,answers=stepAnswers;
     if(criterion==='C4'){
       const context=window.TRAINING_DATA.c4Context?.[session.clientId];
@@ -37,7 +36,8 @@ window.TrainingEngine = (() => {
       if(closed){prompt=closed.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:closed.choices[index]??answer.text}))}
     }
 
-    if(criterion==='C6'&&companyDisclosed){
+    const recoveringC5=session.lastOutcome&&session.lastFailedCriterion==='C5'&&criterion==='C6';
+    if(criterion==='C6'&&companyDisclosed&&!recoveringC5){
       const companyLead=window.TRAINING_DATA.c6CompanionLead?.[session.clientId];
       if(companyLead){
         const standardIndex=answers.findIndex(answer=>answer.events?.includes('C6'));
@@ -47,14 +47,50 @@ window.TrainingEngine = (() => {
     }
     if(['soft','hard'].includes(session.lastOutcome)&&session.lastFailedCriterion){
       let recovery=window.TRAINING_DATA.recoveryCopy?.[session.clientId]?.[session.lastFailedCriterion];
-      if(session.lastFailedCriterion==='C6'&&criterion==='C9'){
-        const recoverySet=clues.has('C4')?window.TRAINING_DATA.c6NeedRecovery:clues.has('C3')?window.TRAINING_DATA.c6ExperienceRecovery:window.TRAINING_DATA.c6GenericRecovery;
-        recovery=recoverySet?.[session.clientId]||recovery;
+      if(session.lastFailedCriterion==='C5'&&criterion==='C6'){
+        const reply=session.lastClientReply||'';
+        const kind=companyDisclosed?'companion':/(знакомств|первого визит|встреч)/i.test(reply)?'visit':/(распис|график|слот|врем[яеи])/i.test(reply)?'schedule':/(карт|формат|тариф|стоим|цен|семейн)/i.test(reply)?'card':'other';
+        recovery=window.TRAINING_DATA.c5RecoveryCopy?.[session.clientId]?.[kind]||recovery;
       }
-      if(session.lastFailedCriterion==='C9'&&criterion==='C7'&&/(точн|дат[ауые]|времен|слот|заранее|согласован|организован)/i.test(session.lastClientReply||''))
-        recovery=window.TRAINING_DATA.c9TimeRecovery?.[session.clientId]||recovery;
-      if(session.lastFailedCriterion==='C4'&&criterion==='C5'&&/(не решил[аи]?|не решила|не определил[аи]?|пока не решил|пока не решила|какой результат.*приоритет|какую задачу.*главн|трудно сформулировать результат)/i.test(session.lastClientReply||''))
-        recovery=window.TRAINING_DATA.c4PauseBridge||recovery;
+      if(session.lastFailedCriterion==='C8'&&criterion==='C10'){
+        const reply=session.lastClientReply||'';
+        const kind=/(перв.{0,12}плат|платеж|платёж|списан|автоспис)/i.test(reply)?'payment':/(прозрач|схема понятн|условия ясн|теперь понятн|всё понятн)/i.test(reply)?'clear':/(срав|только сразу|разн.{0,15}способ|распределить оплат)/i.test(reply)?'comparison':'default';
+        recovery=window.TRAINING_DATA.c8RecoveryCopy?.[session.clientId]?.[kind]||recovery;
+      }
+      const reopensExperience=criterion==='C4'&&session.lastFailedCriterion==='C3'&&/(хотел[аи]? сначала рассказать|не успел[аи]? рассказать|хотел[аи]? рассказать.*опыт|не рассказал[аи].*опыт|мешало заниматься раньше)/i.test(session.lastClientReply||'');
+      if(reopensExperience){
+        const repair=window.TRAINING_DATA.c4ExperienceRecoveryChoices?.[session.clientId];
+        if(repair?.length===answers.length){
+          const apology=session.lastOutcome==='hard'?(window.TRAINING_DATA.recoveryHardLead?.[session.clientId]||'Извините, я ответил не по сути. '):'';
+          answers=answers.map((answer,index)=>({...answer,text:`${apology}${repair[index].text}`,reply:repair[index].reply,recoveryFrom:session.lastFailedCriterion,recoveryOutcome:session.lastOutcome}));
+          prompt=`${prompt} Учтите последнюю реплику клиента: «${session.lastClientReply}»`;
+          recovery=null;
+        }
+      }
+      if(session.lastFailedCriterion==='C6'&&criterion==='C9'){
+        const reply=session.lastClientReply||'';
+        if(/дорог|маршрут|сколько обычно занимает|время в пути|какой вечерний слот/i.test(reply))recovery=window.TRAINING_DATA.c6ReplyRecovery?.route?.[session.clientId]||recovery;
+        else if(/сервис|сопровожд|встреч|очеред|по шагам|первые упражнения|тренер/i.test(reply))recovery=window.TRAINING_DATA.c6ReplyRecovery?.service?.[session.clientId]||recovery;
+        else if(/не одному|не одна|вместе|друг|подруг|супруг|коллег|близк/i.test(reply))recovery=window.TRAINING_DATA.c6ReplyRecovery?.companion?.[session.clientId]||recovery;
+        else {
+          const recoverySet=clues.has('C4')?window.TRAINING_DATA.c6NeedRecovery:clues.has('C3')?window.TRAINING_DATA.c6ExperienceRecovery:window.TRAINING_DATA.c6GenericRecovery;
+          recovery=recoverySet?.[session.clientId]||recovery;
+        }
+      }
+      if(session.lastFailedCriterion==='C9'&&criterion==='C7'){
+        const reply=session.lastClientReply||'';
+        if (/(куда идти|не понять[, ]+куда|добрат|маршрут|вход|где меня встрет|подтвержден|подтверждён)/i.test(reply))
+          recovery=window.TRAINING_DATA.c9LogisticsRecovery?.[session.clientId]||recovery;
+        else if (/(точн|дат[ауые]|врем[яеи]|слот|заранее|согласован|организован|не понят)/i.test(reply))
+          recovery=window.TRAINING_DATA.c9TimeRecovery?.[session.clientId]||recovery;
+      }
+      if(session.lastFailedCriterion==='C4'&&criterion==='C5'){
+        const reply=session.lastClientReply||'';
+        if (/(не решил[аи]?|не решила|не определил[аи]?|пока не решил|пока не решила|не объяснил[аи].*(?:результат|задач)|какой результат.*приоритет|какую задачу.*главн|трудно сформулировать результат|пока только присматриваюсь|не знаю.*присматриваюсь)/i.test(reply))
+          recovery=window.TRAINING_DATA.c4PauseBridge||recovery;
+        else if (/(плав|спин|энерг|восстан|тонус|выносл|переключ|дорог|маршрут|график|комфорт|перегруз|поддерж|регулярн|форму|заниматься.*после)/i.test(reply))
+          recovery=window.TRAINING_DATA.c4AcknowledgedNeedRecovery?.[session.clientId]||recovery;
+      }
       if(criterion==='C2'&&session.lastFailedCriterion==='C1'){
         const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
         answers=answers.map(answer=>({...answer,text:answer.text.replace(`${guestName}, `,'')}));
