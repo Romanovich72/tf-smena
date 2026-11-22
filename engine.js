@@ -1,8 +1,9 @@
 window.TrainingEngine = (() => {
   const mix = list => { const a=[...list]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
+  const joinRecovery=(lead,line)=>`${lead}${/[.!?…]\s*$/u.test(lead)?String(line).replace(/^([а-яё])/u,letter=>letter.toLocaleUpperCase('ru')):line}`;
   function start(client,mode='practice',startIndex=null){
     const context=client.starts[startIndex??Math.floor(Math.random()*client.starts.length)];
-    return {mode,clientId:client.id,clientName:client.name,image:client.image,context,trust:50,roughRun:0,revealedClues:0,revealedClueIds:[],earlyPriceLeak:false,step:0,answers:[],lastOutcome:null,lastFailedCriterion:null,failedCriteria:[],lastClientReply:'',done:false,outcome:null};
+    return {mode,clientId:client.id,clientName:client.name,image:client.image,context,trust:50,roughRun:0,revealedClues:0,revealedClueIds:[],earlyPriceLeak:false,step:0,answers:[],lastOutcome:null,lastFailedCriterion:null,failedCriteria:[],lastClientReply:'',nameKnown:false,done:false,outcome:null};
   }
   function clueIdsFor(session){return new Set([...(session.revealedClueIds||[]),...session.answers.flatMap(answer=>answer.events||[]).filter(id=>['C3','C4','C5'].includes(id))])}
   function options(session){
@@ -10,13 +11,15 @@ window.TrainingEngine = (() => {
     if(!step)return null;
     const [criterion,stepPrompt,stepAnswers]=step;
     const clues=clueIdsFor(session);
+    const spokenContext=[session.context.prompt,...session.answers.map(answer=>answer.reply||'')].join(' ');
+    const companyDisclosed=clues.has('C5')||/(^|[^а-яё])(?:супруг(?:а|у|ом|е)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(spokenContext);
     let prompt=stepPrompt,answers=stepAnswers;
     if(criterion==='C4'){
       const context=window.TRAINING_DATA.c4Context?.[session.clientId];
       const variant=clues.has('C3')?context?.afterExperience:context?.closed;
       if(variant){prompt=variant.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:variant.choices[index]??answer.text}))}
     }
-    if(criterion==='C7'&&!clues.has('C3')&&!clues.has('C4')){
+    if(criterion==='C7'&&!clues.has('C4')){
       const context=window.TRAINING_DATA.c7Context?.[session.clientId];
       if(context){prompt=context.prompt;answers=stepAnswers.map((answer,index)=>index===0?{...answer,text:context.text}:answer)}
     }
@@ -24,30 +27,57 @@ window.TrainingEngine = (() => {
       const blind=window.TRAINING_DATA.blindC6?.[session.clientId];
       if(blind){prompt=blind.prompt;answers=blind.answers}
     }
+    if(criterion==='C6'&&(clues.has('C3')||clues.has('C4'))){
+      const choices=window.TRAINING_DATA.knownC6Choices?.[session.clientId];
+      const reactions=window.TRAINING_DATA.knownC6Replies?.[session.clientId];
+      if(choices)answers=answers.map((answer,index)=>({...answer,text:choices[index]??answer.text,reply:reactions?.[index]??answer.reply}));
+    }
+    if(criterion==='C9'&&!clues.has('C3')&&!clues.has('C4')){
+      const closed=window.TRAINING_DATA.c9Closed?.[session.clientId];
+      if(closed){prompt=closed.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:closed.choices[index]??answer.text}))}
+    }
+
+    if(criterion==='C6'&&companyDisclosed){
+      const companyLead=window.TRAINING_DATA.c6CompanionLead?.[session.clientId];
+      if(companyLead){
+        const standardIndex=answers.findIndex(answer=>answer.events?.includes('C6'));
+        if(standardIndex>=0)answers=answers.map((answer,index)=>index===standardIndex?{...answer,text:`${companyLead}${answer.text}`,companionContext:true}:answer);
+        else answers=answers.map((answer,index)=>index===0?{...answer,text:`${companyLead}${answer.text}`,companionContext:true}:answer);
+      }
+    }
     if(['soft','hard'].includes(session.lastOutcome)&&session.lastFailedCriterion){
-      const recovery=window.TRAINING_DATA.recoveryCopy?.[session.clientId]?.[session.lastFailedCriterion];
+      let recovery=window.TRAINING_DATA.recoveryCopy?.[session.clientId]?.[session.lastFailedCriterion];
+      if(session.lastFailedCriterion==='C6'&&criterion==='C9'){
+        const recoverySet=clues.has('C4')?window.TRAINING_DATA.c6NeedRecovery:clues.has('C3')?window.TRAINING_DATA.c6ExperienceRecovery:window.TRAINING_DATA.c6GenericRecovery;
+        recovery=recoverySet?.[session.clientId]||recovery;
+      }
+      if(session.lastFailedCriterion==='C9'&&criterion==='C7'&&/(точн|дат[ауые]|времен|слот|заранее|согласован|организован)/i.test(session.lastClientReply||''))
+        recovery=window.TRAINING_DATA.c9TimeRecovery?.[session.clientId]||recovery;
+      if(session.lastFailedCriterion==='C4'&&criterion==='C5'&&/(не решил[аи]?|не решила|не определил[аи]?|пока не решил|пока не решила|какой результат.*приоритет|какую задачу.*главн|трудно сформулировать результат)/i.test(session.lastClientReply||''))
+        recovery=window.TRAINING_DATA.c4PauseBridge||recovery;
       if(criterion==='C2'&&session.lastFailedCriterion==='C1'){
         const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
         answers=answers.map(answer=>({...answer,text:answer.text.replace(`${guestName}, `,'')}));
       }
-      const standardIndex=answers.findIndex(answer=>answer.events?.includes(criterion));
-      if(recovery&&standardIndex>=0){
-        const standard=answers[standardIndex];
+      if(recovery){
         const apology=session.lastOutcome==='hard'
           ? (window.TRAINING_DATA.recoveryHardLead?.[session.clientId]||'Извините, я ответил не по сути. ')
           : '';
-        let lead=recovery;
-        if(session.lastFailedCriterion==='C7'&&criterion==='C8')lead=`${lead}Помесячный формат — альтернатива оплате годовой карты сразу; `;
-        answers=answers.map((answer,index)=>index===standardIndex?{
+        const lead=joinRecovery(apology,recovery);
+        answers=answers.map(answer=>({
           ...answer,
-          text:`${apology}${lead}${standard.text}`,
+          text:joinRecovery(lead,answer.text),
           recoveryFrom:session.lastFailedCriterion,
           recoveryOutcome:session.lastOutcome
-        }:answer);
+        }));
         prompt=`${prompt} Учтите последнюю реплику клиента: «${session.lastClientReply}»`;
       }
     }
-    return {criterion,prompt,answers:mix(answers).map((a,i)=>({...a,display:i+1}))};
+    if(!session.nameKnown){
+      const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
+      if(guestName)answers=answers.map(answer=>({...answer,text:answer.text.replaceAll(`${guestName}, `,'')}));
+    }
+    return {criterion,prompt,answers:mix(answers).map((a,i)=>({...a,text:String(a.text).replace(/^([а-яё])/u,letter=>letter.toLocaleUpperCase('ru')),display:i+1}))};
   }
   function choose(session,answer){
     if(session.done)return session;
@@ -58,11 +88,14 @@ window.TrainingEngine = (() => {
     answer.events.filter(id=>['C3','C4','C5'].includes(id)).forEach(id=>clueIds.add(id));
     const trackedAnswer={...answer,earlyLeakTriggered};
     if((session.earlyPriceLeak||earlyLeakTriggered)&&answer.pricePressureReply)trackedAnswer.reply=answer.pricePressureReply;
+    const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
+    const nameSpoken=guestName&&new RegExp(`(^|[^а-яё])${guestName}($|[^а-яё])`,'i').test(trackedAnswer.reply||'');
+    const nameKnown=Boolean(session.nameKnown||answer.events.includes('C1')||nameSpoken);
     const turnOutcome=answer.events.includes(criterion)?'standard':answer.rough?'hard':'soft';
     const failedCriteria=turnOutcome==='standard'?(session.failedCriteria||[]):[...new Set([...(session.failedCriteria||[]),criterion])];
     const trustDelta=answer.delta-(earlyLeakTriggered?8:0);
     const nextStep=answer.returnTo?session.context.steps.findIndex(step=>step[0]===answer.returnTo):session.step+1;
-    const next={...session,answers:[...session.answers,trackedAnswer],trust:Math.max(0,Math.min(100,session.trust+trustDelta)),roughRun:answer.rough?session.roughRun+1:0,revealedClues:clueIds.size,revealedClueIds:[...clueIds],earlyPriceLeak:session.earlyPriceLeak||earlyLeakTriggered,step:nextStep>=0?nextStep:session.step+1,lastOutcome:turnOutcome,lastFailedCriterion:turnOutcome==='standard'?null:criterion,failedCriteria,lastClientReply:trackedAnswer.reply||''};
+    const next={...session,answers:[...session.answers,trackedAnswer],trust:Math.max(0,Math.min(100,session.trust+trustDelta)),roughRun:answer.rough?session.roughRun+1:0,revealedClues:clueIds.size,revealedClueIds:[...clueIds],earlyPriceLeak:session.earlyPriceLeak||earlyLeakTriggered,step:nextStep>=0?nextStep:session.step+1,lastOutcome:turnOutcome,lastFailedCriterion:turnOutcome==='standard'?null:criterion,failedCriteria,lastClientReply:trackedAnswer.reply||'',nameKnown};
     if(next.trust<=15||next.roughRun>=2){next.done=true;next.outcome='hangup';return next;}
     if(next.step>=session.context.steps.length){next.done=true;const r=result(next);next.outcome=r.passed?'iron':next.answers.some(a=>a.events.includes('C9'))?'cold':'think';}
     return next;
