@@ -294,26 +294,49 @@ window.TRAINING_DATA = (() => {
     ]
   };
 
-  const roleAnswers = (client,criterion,answers) => {
-    const standard=answers.find(answer=>answer.events.includes(criterion));
-    const errors=answers.filter(answer=>answer!==standard);
-    const hardSource=errors.find(answer=>answer.rough)||errors[0];
-    const softSources=errors.filter(answer=>answer!==hardSource);
-    const voice=clientVoices[client.id];
-    const voiceIndex=Number(criterion.slice(1))-1;
-    const earlyStage=['C1','C2','C3','C4','C5','C6'].includes(criterion);
-    const hardLeakKind=earlyStage?(['C1','C2'].includes(criterion)?'price':'dry-presentation'):undefined;
-    return [
-      {...standard,role:'standard'},
-      {...softSources[0],role:'courtesy',text:courtesyLines[criterion],events:[],delta:-2,rough:false,earlyLeakKind:criterion==='C6'?'dry-presentation':undefined},
-      {...softSources[1],role:'message',text:messageLines[client.id][voiceIndex],events:[],delta:-4,rough:false,earlyLeakKind:earlyStage?'price':undefined},
-      {...hardSource,role:'hard',text:hardSource.rough?hardSource.text:`${hardPrefixes[client.id]}${hardFallback[criterion]}`,events:[],delta:-18,rough:true,earlyLeakKind:hardLeakKind}
-    ].map((answer,index)=>({
-      ...answer,
-      reply:answer.role==='standard'?answer.reply:answer.role==='hard'?voice.rough[voiceIndex]:voice.soft[voiceIndex],
-      pricePressureReply:pricePressureReplies[client.id][voiceIndex],
-      id:`${client.id}-${criterion}-${answer.role}`
-    }));
+  const c4Context = {
+    analyst:{
+      closed:{prompt:'Клиент пока не раскрыл прошлый опыт. Выясните личный результат, не приписывая ему конкретную потребность.',choices:['Алексей, чтобы не предлагать лишнее, что хотите получить от занятий: больше энергии, регулярность или спокойный отдых после работы?','Что для вас сейчас важнее: самочувствие, тонус или возможность встроить занятия в график?','Какой первый результат вы посчитаете полезным лично для себя?','Давайте я сначала перечислю программы клуба, а к вашей задаче вернёмся позже.']},
+      afterExperience:{prompt:'Учитывайте уже озвученный опыт и уточните, какого результата клиент хочет теперь.',choices:['Алексей, с учётом вашего прошлого опыта, чего хотите добиться теперь: больше энергии, регулярности или спокойного восстановления?','Что хотелось бы изменить в этот раз, чтобы занятия лучше вписались в вашу жизнь?','Какой результат стал бы для вас аргументом выбрать новый формат?','Предыдущий опыт пока отложим; сначала перечислю наши программы.']}
+    },
+    driver:{
+      closed:{prompt:'Клиент держит запрос закрытым. Коротко уточните результат без предположений о нужных зонах.',choices:['Максим, чего хотите от тренировок сейчас: переключиться после работы, поддерживать форму или наладить регулярность?','Что важнее на выходе: больше энергии, меньше напряжения или понятный вечерний режим?','Какой результат оправдает время, которое вы выделите на занятия?','Сначала быстро перечислю направления, а цель потом выберете сами.']},
+      afterExperience:{prompt:'Коротко свяжите прошлый опыт с тем, что клиент хочет получить сейчас.',choices:['Максим, с учётом того, что рассказали о прежних занятиях, какой результат нужен сейчас: быстрее переключаться или держать форму?','Что в этот раз должно быть удобнее, чтобы занятия не выпадали из графика?','Какой первый результат покажет, что дорога и время того стоят?','Понял, теперь перечислю расписание и направления клуба.']}
+    },
+    woman:{
+      closed:{prompt:'Клиентка пока не раскрыла опыт. Тактично уточните желаемый результат и комфортный формат.',choices:['Елена, что для вас было бы самым ценным результатом: больше энергии, время для себя или регулярный отдых после работы?','Какой формат помог бы чувствовать себя комфортнее и увереннее в решении?','Что вы хотели бы изменить в своём самочувствии или привычном ритме?','Сначала расскажу обо всех направлениях клуба, а затем выберете интересное.']},
+      afterExperience:{prompt:'Оттолкнитесь от уже рассказанного клиенткой опыта и уточните, чего ей не хватало.',choices:['Елена, после того, что рассказали о прошлом опыте, чего хотелось бы больше: внимания, комфорта или времени для себя?','Что важно изменить в этот раз, чтобы занятия приносили больше пользы?','По каким признакам поймёте, что новый формат вам подходит?','Пока не будем возвращаться к вашему опыту; перечислю наши предложения.']}
+    },
+    novice:{
+      closed:{prompt:'Клиент пока не рассказал об опыте. Бережно выясните, какой первый результат и поддержка ему нужны.',choices:['Илья, если начать постепенно, какой результат был бы для вас хорошим первым шагом: больше уверенности, энергии или привычка заниматься?','Что помогло бы чувствовать себя спокойнее, когда вы решите начать?','Какой небольшой результат показал бы, что вы движетесь в своём темпе?','Я перечислю все программы, а вы сами выберете, с чего начать.']},
+      afterExperience:{prompt:'Свяжите уже рассказанный опыт с бережной, достижимой целью.',choices:['Илья, учитывая ваш прошлый опыт, с чего было бы комфортнее начать: с регулярности, уверенности или постепенной нагрузки?','Что хотелось бы сделать понятнее, чтобы в следующий раз было спокойнее?','Какой небольшой результат вы бы хотели заметить первым?','Не будем обсуждать, что смущало раньше; расскажу про все программы сразу.']}
+    }
+  };
+  const blindC6 = {
+    analyst:{prompt:'Попытка презентовать вслепую · клиент снова просит цену. Верните разговор к выявлению опыта или мотива либо рискните перечислить зоны наугад.',answers:[
+      {id:'analyst-C3-recovery-from-C6',text:'Алексей, не буду гадать с предложением. Расскажите, пожалуйста, где занимались раньше и чего не хватало?',events:['C3'],delta:2,rough:false,reply:'Раньше ходил в соседний клуб, но к вечеру там становилось тесно.',returnTo:'C4'},
+      {id:'analyst-C4-recovery-from-C6',text:'Алексей, прежде чем обсуждать зоны, что хотите получить от занятий: больше энергии, спокойный отдых или регулярность?',events:['C4'],delta:4,rough:false,reply:'Хочу меньше уставать после работы и заниматься регулярно.',returnTo:'C5'},
+      {id:'analyst-C6-blind-list',text:'Наугад перечислю направления: тренажёрный зал, групповые занятия и термальная зона. Что-нибудь выберете.',events:[],delta:-8,rough:false,earlyLeakKind:'dry-presentation',pricePressureReply:'Я спрашивал, сколько стоит карта, а не список направлений.'},
+      {id:'analyst-C6-blind-price',text:'Понимаю, годовая карта стоит 89 100 рублей. Остальное можно обсудить, если решите приехать.',events:[],delta:-12,rough:false,earlyLeakKind:'price',pricePressureReply:'Одной суммы недостаточно для сравнения. Какая итоговая стоимость и что в неё входит?'}
+    ]},
+    driver:{prompt:'Попытка презентовать вслепую · клиент требует цифру и торопится. Вернитесь к короткому вопросу о задаче или рискуйте с общим списком.',answers:[
+      {id:'driver-C3-recovery-from-C6',text:'Максим, быстро уточню: где занимались раньше и что мешало успевать?',events:['C3'],delta:2,rough:false,reply:'Занимался рядом с офисом, но дорога вечером отнимала время.',returnTo:'C4'},
+      {id:'driver-C4-recovery-from-C6',text:'Максим, коротко: что важнее сейчас — успевать вечером, поддерживать форму или быстрее переключаться после работы?',events:['C4'],delta:4,rough:false,reply:'Хочу успевать заниматься вечером и не тратить лишнее время.',returnTo:'C5'},
+      {id:'driver-C6-blind-list',text:'Есть тренажёрный зал, групповые программы и термальная зона — перечислю быстро, выберете сами.',events:[],delta:-8,rough:false,earlyLeakKind:'dry-presentation',pricePressureReply:'Я цену спрашивал. Сколько годовая карта стоит?'} ,
+      {id:'driver-C6-blind-price',text:'Хорошо, годовая карта — 89 100 рублей. Остальное расскажу, если приедете.',events:[],delta:-12,rough:false,earlyLeakKind:'price',pricePressureReply:'Без полной суммы и условий я никуда не поеду. Назовите итоговую цену.'}
+    ]},
+    woman:{prompt:'Попытка презентовать вслепую · клиентка ждёт персонального ответа и ясности по цене. Сначала уточните её задачу или отвечайте наугад.',answers:[
+      {id:'woman-C3-recovery-from-C6',text:'Елена, чтобы не делать предположений, расскажите, пожалуйста, что нравилось и чего не хватало в прежнем формате?',events:['C3'],delta:2,rough:false,reply:'В прежнем клубе было шумно, а персонал редко помогал с вопросами.',returnTo:'C4'},
+      {id:'woman-C4-recovery-from-C6',text:'Елена, что для вас сейчас важнее всего: комфорт, больше энергии или спокойное время для себя?',events:['C4'],delta:4,rough:false,reply:'Хочу отдыхать после работы и чувствовать внимательное отношение.',returnTo:'C5'},
+      {id:'woman-C6-blind-list',text:'Могу перечислить направления наугад: тренажёрный зал, групповые программы и термальная зона.',events:[],delta:-8,rough:false,earlyLeakKind:'dry-presentation',pricePressureReply:'Я жду персонального ответа и сначала хочу знать стоимость.'},
+      {id:'woman-C6-blind-price',text:'Тогда сразу назову сумму: годовая карта стоит 89 100 рублей. Детали можно обсудить при визите.',events:[],delta:-12,rough:false,earlyLeakKind:'price',pricePressureReply:'До визита мне нужны полная цена и условия. Назовите итоговую сумму.'}
+    ]},
+    novice:{prompt:'Попытка презентовать вслепую · новичку важно не растеряться, но он пока держит запрос закрытым. Верните разговор к опыту или цели.',answers:[
+      {id:'novice-C3-recovery-from-C6',text:'Илья, чтобы подобрать спокойный первый шаг, расскажите, пробовали ли заниматься раньше и что было непонятно?',events:['C3'],delta:2,rough:false,reply:'Пробовал пару раз, но часто терялся и не знал, с чего начать.',returnTo:'C4'},
+      {id:'novice-C4-recovery-from-C6',text:'Илья, какой небольшой результат помог бы вам начать увереннее и без лишней спешки?',events:['C4'],delta:4,rough:false,reply:'Мне важно начать постепенно и не бояться ошибиться.',returnTo:'C5'},
+      {id:'novice-C6-blind-list',text:'У нас есть тренажёрный зал, групповые занятия и термальная зона. Потом сами разберётесь, что выбрать.',events:[],delta:-8,rough:false,earlyLeakKind:'dry-presentation',pricePressureReply:'Мне пока сложно выбирать из списка. Скажите сначала, сколько стоит карта.'},
+      {id:'novice-C6-blind-price',text:'Годовая карта стоит 89 100 рублей. Если цена подходит, потом расскажу, как всё устроено.',events:[],delta:-12,rough:false,earlyLeakKind:'price',pricePressureReply:'Мне спокойнее сначала понять, что входит в стоимость и какие есть платежи.'}
+    ]}
   };
   const stopPhrases = [
     {phrase:'89 100 рублей.',criterion:'C7'},
@@ -404,11 +427,10 @@ window.TRAINING_DATA = (() => {
       if(voice)reply=answer.events.length?voice.success[voiceIndex]:answer.rough?voice.rough[voiceIndex]:voice.soft[voiceIndex];
       return {...answer,id:`${client.id}-${criterion}-${index}`,text,reply};
     });
-    step[2]=roleAnswers(client,criterion,step[2]);
   })));
   const dialogOrder=['C1','C2','C3','C4','C5','C6','C9','C7','C8','C10'];
   clients.forEach(client=>client.starts.forEach(start=>{
     start.steps.sort((a,b)=>dialogOrder.indexOf(a[0])-dialogOrder.indexOf(b[0]));
   }));
-  return {checklist,clients,morningSprint:['driver','analyst','novice'],drillRoster:['driver','analyst','novice'],stopPhrases,sessionStart:'06-call-center.jpg',visit:'03-lobby.jpg',manager:'05-manager-hall.jpg'};
+  return {checklist,clients,c4Context,blindC6,morningSprint:['driver','analyst','novice'],drillRoster:['driver','analyst','novice'],stopPhrases,sessionStart:'06-call-center.jpg',visit:'03-lobby.jpg',manager:'05-manager-hall.jpg'};
 })();
