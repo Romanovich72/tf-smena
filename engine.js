@@ -45,6 +45,10 @@ window.TrainingEngine = (() => {
         else answers=answers.map((answer,index)=>index===0?{...answer,text:`${companyLead}${answer.text}`,companionContext:true}:answer);
       }
     }
+    if(!session.nameKnown){
+      const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
+      if(guestName)answers=answers.map(answer=>({...answer,text:answer.text.replaceAll(`${guestName}, `,'')}));
+    }
     if(['soft','hard'].includes(session.lastOutcome)&&session.lastFailedCriterion){
       let recovery=window.TRAINING_DATA.recoveryCopy?.[session.clientId]?.[session.lastFailedCriterion];
       if(session.lastFailedCriterion==='C5'&&criterion==='C6'){
@@ -103,10 +107,6 @@ window.TrainingEngine = (() => {
         }));
         prompt=`${prompt} Учтите последнюю реплику клиента: «${session.lastClientReply}»`;
       }
-    }
-    if(!session.nameKnown){
-      const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
-      if(guestName)answers=answers.map(answer=>({...answer,text:answer.text.replaceAll(`${guestName}, `,'')}));
     }
     return {criterion,prompt,answers:mix(answers).map((a,i)=>({...a,text:String(a.text).replace(/^([а-яё])/u,letter=>letter.toLocaleUpperCase('ru')),display:i+1}))};
   }
