@@ -1,8 +1,7 @@
 // Автор проекта и разработки: Павел Аринин, 2026.
 (() => {
   const root=document.querySelector('#app'),D=window.TRAINING_DATA;
-  const shiftRoster=(D.morningSprint||D.clients.map(c=>c.id)).map(id=>D.clients.find(c=>c.id===id)).filter(Boolean);
-  const drillRoster=(D.drillRoster||shiftRoster.map(c=>c.id)).map(id=>D.clients.find(c=>c.id===id)).filter(Boolean);
+  let shiftRoster=[],drillRoster=[];
   let page='home',mode='shift',client=null,session=null,filter='all',shiftCalls=[];
   const storage={get:key=>{try{return localStorage.getItem(key)}catch{return null}},set:(key,value)=>{try{localStorage.setItem(key,value)}catch{}},remove:key=>{try{localStorage.removeItem(key)}catch{}}};
   let pressure=storage.get('tf-noir-pressure-v1')==='true',soundOn=storage.get('tf-noir-sound-v1')!=='false';
@@ -25,7 +24,14 @@
     root.querySelector('#shift').onclick=()=>{mode='shift';begin(0)};root.querySelector('#free').onclick=()=>{mode='practice';page='choose';chooseScreen()};
   }
   function chooseScreen(){shell(`<main class="panel"><div class="eyebrow">СВОБОДНАЯ ТРЕНИРОВКА</div><h1>Выберите клиента</h1><div class="cards">${D.clients.map(c=>`<button class="client pick" data-client="${c.id}" style="--pic:url('assets/${c.image}')"><b>${esc(c.name)}</b><span>${esc(c.persona)}</span></button>`).join('')}</div><p>Тренировка сохраняется отдельно от официальной статистики смен.</p></main>`);root.querySelectorAll('[data-client]').forEach(b=>b.onclick=()=>{mode='practice';beginClient(D.clients.find(c=>c.id===b.dataset.client))})}
-  function begin(i){if(i===0)shiftCalls=[];if(i>=shiftRoster.length){page='result';render();return}beginClient(shiftRoster[i],i)}
+  function begin(i){
+    if(i===0){
+      shiftCalls=[];
+      shiftRoster=TrainingEngine.mix(D.clients).slice(0,3);
+    }
+    if(i>=shiftRoster.length){page='result';render();return}
+    beginClient(shiftRoster[i],i);
+  }
   function beginClient(c,index=0,contextIndex=null){clearInterval(timerId);client=c;session=TrainingEngine.start(c,mode,contextIndex);session.shiftIndex=index;session.contextIndex=c.starts.indexOf(session.context);cachedOptions=null;cachedKey='';rushLine='';trustFX='';stopwordFeedback=null;page='call';render()}
   function call(){
     const key=`${client.id}:${session.step}`;if(!cachedOptions||cachedKey!==key){cachedOptions=TrainingEngine.options(session);cachedKey=key}const opt=cachedOptions;if(!opt){finish();return}
@@ -58,7 +64,13 @@
     shell(`<main class="panel"><div class="eyebrow">ПРОФИЛЬ МЕНЕДЖЕРА</div><h1>Сильные стороны<br><em>и точки роста.</em></h1><div class="tabs"><button data-filter="all" class="${filter==='all'?'selected':''}">Всё время</button><button data-filter="shift" class="${filter==='shift'?'selected':''}">Смены</button><button data-filter="practice" class="${filter==='practice'?'selected':''}">Тренировки</button></div><div class="stats"><div><b>${shifts.length}</b><span>СМЕНЫ</span></div><div><b>${practices.length}</b><span>ТРЕНИРОВКИ</span></div><div><b>${rows.length}</b><span>ВСЕГО ПОПЫТОК</span></div></div><button class="primary drill-start" id="weakDrill" data-criterion="${weak}">✦ Прокачать слабое место · ${weak}</button><p class="note">Или выберите любой критерий для короткой отработки:</p><div class="profilelist">${stats.map(s=>`<div class="profile-row"><button class="criterion-link" data-drill="${s.id}">${s.id} · ${esc(s.title)}</button><div><i style="width:${s.rate}%"></i></div><b>${s.total?s.rate+'%':'—'}</b></div>`).join('')}</div><p class="note">Смены и тренировки учитываются раздельно. Отработки слабых мест не сохраняются в статистику.</p><button class="secondary" id="clear">Очистить историю</button></main>`);
     root.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;render()});root.querySelectorAll('[data-drill]').forEach(b=>b.onclick=()=>startDrill(b.dataset.drill));root.querySelector('#weakDrill').onclick=()=>startDrill(weak);root.querySelector('#clear').onclick=()=>{if(confirm('Удалить всю сохранённую историю попыток?')){storage.remove('tf-noir-training-v1');render()}};
   }
-  function startDrill(criterionId){drill={criterionId,round:0,answer:null,client:null,options:null,context:null};loadDrillRound();page='drill';render()}
+  function startDrill(criterionId){
+    drillRoster=TrainingEngine.mix(D.clients).slice(0,3);
+    drill={criterionId,round:0,answer:null,client:null,options:null,context:null};
+    loadDrillRound();
+    page='drill';
+    render();
+  }
   function loadDrillRound(){const c=drillRoster[drill.round];drill.client=c;drill.context=c.starts[Math.floor(Math.random()*c.starts.length)];const step=drill.context.steps.find(s=>s[0]===drill.criterionId);drill.options=TrainingEngine.mix(step?.[2]||[]);drill.answer=null}
   function drillScreen(){
     if(drill.round>=3){shell(`<main class="panel drill-result"><div class="eyebrow">MICRO-DRILL · ЗАВЕРШЕНО</div><h1>Раунд за раундом.<br><em>Навык закреплён.</em></h1><p>Вы отработали ${drill.criterionId} на трёх архетипах. Результаты не добавлены в статистику смен.</p><button class="primary" id="toProfile">Вернуться в профиль</button></main>`);root.querySelector('#toProfile').onclick=()=>{page='profile';render()};return}

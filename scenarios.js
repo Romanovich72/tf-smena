@@ -475,12 +475,13 @@ window.TRAINING_DATA = (() => {
       if(client.id==='driver')reply=reply.replaceAll('Алексей','Максим');
       if(client.id==='woman')reply=reply.replaceAll('Алексей','Елена').replace('Был в клубе рядом','Раньше занималась в клубе рядом').replace(/не рассказал(?![а-яё])/gi,'не рассказала').replace(/не сказал(?![а-яё])/gi,'не сказала').replace(/не объяснил(?![а-яё])/gi,'не объяснила').replace(/хотел сравнить(?![а-яё])/gi,'хотела сравнить').replace(/с супругой(?=\s|[,.!?]|$)/g,'с супругом');
       if(client.id==='novice')reply=reply.replaceAll('Алексей','Илья');
-      return {...answer,id:`${client.id}-${criterion}-${index}`,text,reply};
+      const quotesEarlyPrice=(criterion==='C1'||criterion==='C2')&&/89\s+100\s*(?:руб|₽)/u.test(text);
+      return {...answer,id:`${client.id}-${criterion}-${index}`,text,reply,...(quotesEarlyPrice?{earlyLeakKind:'price'}:{})};
     });
   })));
   const dialogOrder=['C1','C2','C3','C4','C5','C6','C9','C7','C8','C10'];
   clients.forEach(client=>client.starts.forEach(start=>{
     start.steps.sort((a,b)=>dialogOrder.indexOf(a[0])-dialogOrder.indexOf(b[0]));
   }));
-  return {checklist,clients,c4Context,c7Context,c9Closed,blindC6,recoveryCopy,c6GenericRecovery,c6ExperienceRecovery,c6NeedRecovery,c6ReplyRecovery,c6CompanionLead,c5RecoveryCopy,c8RecoveryCopy,c4AcknowledgedNeedRecovery,knownC6Choices,knownC6Replies,c4PauseBridge,c4ExperienceRecoveryLead,c4ExperienceRecoveryChoices,c9TimeRecovery,c9LogisticsRecovery,morningSprint:['driver','analyst','novice'],drillRoster:['driver','analyst','novice'],stopPhrases,findStopPhrase,sessionStart:'06-call-center.jpg',visit:'03-lobby.jpg',manager:'05-manager-hall.jpg'};
+  return {checklist,clients,c4Context,c7Context,c9Closed,blindC6,recoveryCopy,c6GenericRecovery,c6ExperienceRecovery,c6NeedRecovery,c6ReplyRecovery,c6CompanionLead,c5RecoveryCopy,c8RecoveryCopy,c4AcknowledgedNeedRecovery,knownC6Choices,knownC6Replies,c4PauseBridge,c4ExperienceRecoveryLead,c4ExperienceRecoveryChoices,c9TimeRecovery,c9LogisticsRecovery,morningSprint:['driver','analyst','woman','novice'],drillRoster:['driver','analyst','woman','novice'],stopPhrases,findStopPhrase,sessionStart:'06-call-center.jpg',visit:'03-lobby.jpg',manager:'05-manager-hall.jpg'};
 })();
