@@ -61,8 +61,7 @@ window.TrainingEngine = (() => {
       if(reopensExperience){
         const repair=window.TRAINING_DATA.c4ExperienceRecoveryChoices?.[session.clientId];
         if(repair?.length===answers.length){
-          const apology=session.lastOutcome==='hard'?(window.TRAINING_DATA.recoveryHardLead?.[session.clientId]||'Извините, я ответил не по сути. '):'';
-          answers=answers.map((answer,index)=>({...answer,text:`${apology}${repair[index].text}`,reply:repair[index].reply,recoveryFrom:session.lastFailedCriterion,recoveryOutcome:session.lastOutcome}));
+          answers=answers.map((answer,index)=>({...answer,text:repair[index].text,reply:repair[index].reply,recoveryFrom:session.lastFailedCriterion,recoveryOutcome:session.lastOutcome}));
           prompt=`${prompt} Учтите последнюю реплику клиента: «${session.lastClientReply}»`;
           recovery=null;
         }
@@ -96,13 +95,9 @@ window.TrainingEngine = (() => {
         answers=answers.map(answer=>({...answer,text:answer.text.replace(`${guestName}, `,'')}));
       }
       if(recovery){
-        const apology=session.lastOutcome==='hard'
-          ? (window.TRAINING_DATA.recoveryHardLead?.[session.clientId]||'Извините, я ответил не по сути. ')
-          : '';
-        const lead=joinRecovery(apology,recovery);
         answers=answers.map(answer=>({
           ...answer,
-          text:joinRecovery(lead,answer.text),
+          text:joinRecovery(recovery,answer.text),
           recoveryFrom:session.lastFailedCriterion,
           recoveryOutcome:session.lastOutcome
         }));
@@ -126,7 +121,7 @@ window.TrainingEngine = (() => {
     if((session.earlyPriceLeak||earlyLeakTriggered)&&answer.pricePressureReply)trackedAnswer.reply=answer.pricePressureReply;
     const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
     const nameSpoken=guestName&&new RegExp(`(^|[^а-яё])${guestName}($|[^а-яё])`,'i').test(trackedAnswer.reply||'');
-    const nameKnown=Boolean(session.nameKnown||answer.events.includes('C1')||nameSpoken);
+    const nameKnown=Boolean(session.nameKnown||nameSpoken);
     const turnOutcome=answer.events.includes(criterion)?'standard':answer.rough?'hard':'soft';
     const failedCriteria=turnOutcome==='standard'?(session.failedCriteria||[]):[...new Set([...(session.failedCriteria||[]),criterion])];
     const trustDelta=answer.delta-(earlyLeakTriggered?8:0);
