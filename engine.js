@@ -11,6 +11,9 @@ window.TrainingEngine = (() => {
     if(!step)return null;
     const [criterion,stepPrompt,stepAnswers]=step;
     const clues=clueIdsFor(session);
+    const need=clues.has('C3')
+      ? (clues.has('C4')?'both':'experience')
+      : (clues.has('C4')?'motive':'blind');
     const companyDisclosed=/(^|[^а-яё])(?:супруг(?:а|у|ом|е|ой)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(session.lastClientReply||'');
     let prompt=stepPrompt,answers=stepAnswers;
     if(criterion==='C4'){
@@ -18,7 +21,7 @@ window.TrainingEngine = (() => {
       const variant=clues.has('C3')?context?.afterExperience:context?.closed;
       if(variant){prompt=variant.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:variant.choices[index]??answer.text}))}
     }
-    if(criterion==='C7'&&!clues.has('C4')){
+    if(criterion==='C7'&&need==='blind'){
       const context=window.TRAINING_DATA.c7Context?.[session.clientId];
       if(context){prompt=context.prompt;answers=stepAnswers.map((answer,index)=>index===0?{...answer,text:context.text}:answer)}
     }
@@ -36,6 +39,15 @@ window.TrainingEngine = (() => {
       if(closed){prompt=closed.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:closed.choices[index]??answer.text}))}
     }
 
+    const valueLine=window.TRAINING_DATA.valueDialogue[session.clientId]?.[need]?.[criterion];
+    if(valueLine){
+      answers=answers.map(answer=>answer.events.includes(criterion)?{...answer,text:valueLine}:answer);
+      if(need!=='both')prompt={
+        C6:'Предложите подходящую особенность клуба с учётом слов гостя.',
+        C9:'Предложите за 10 минут проверить то, что важно гостю.',
+        C7:'Свяжите цену с тем, что рассказал гость, и предложите выбор оплаты.'
+      }[criterion];
+    }
     const recoveringC5=session.lastOutcome&&session.lastFailedCriterion==='C5'&&criterion==='C6';
     if(criterion==='C6'&&companyDisclosed&&!recoveringC5){
       const companyLead=window.TRAINING_DATA.c6CompanionLead?.[session.clientId];
