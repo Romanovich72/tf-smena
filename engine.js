@@ -126,7 +126,7 @@ window.TrainingEngine = (() => {
     if(session.done)return session;
     const criterion=session.context.steps?.[session.step]?.[0];
     const earlyStage=['C1','C2','C3','C4','C5','C6'].includes(criterion);
-    const earlyLeakTriggered=Boolean(answer.earlyLeakKind)&&earlyStage&&(session.revealedClues||0)<2;
+    const earlyLeakTriggered=answer.earlyLeakKind==='price'||(Boolean(answer.earlyLeakKind)&&earlyStage&&(session.revealedClues||0)<2);
     const clueIds=clueIdsFor(session);
     answer.events.filter(id=>['C3','C4','C5'].includes(id)).forEach(id=>clueIds.add(id));
     const trackedAnswer={...answer,earlyLeakTriggered};
