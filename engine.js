@@ -53,7 +53,7 @@ window.TrainingEngine = (() => {
       if(blind){prompt=blind.prompt;answers=blind.answers}
     }
     if(criterion==='C6'&&(clues.has('C3')||clues.has('C4'))){
-      const choices=window.TRAINING_DATA.knownC6Choices?.[session.clientId];
+      const choices=window.TRAINING_DATA.knownC6Choices?.[session.clientId]?.[need==='both'?'both':'partial'];
       const reactions=window.TRAINING_DATA.knownC6Replies?.[session.clientId];
       if(choices)answers=answers.map((answer,index)=>({...answer,text:choices[index]??answer.text,reply:reactions?.[index]??answer.reply}));
     }
@@ -73,16 +73,13 @@ window.TrainingEngine = (() => {
     }
     const recoveringC5=session.lastOutcome&&session.lastFailedCriterion==='C5'&&criterion==='C6';
     if(criterion==='C6'&&companyDisclosed&&!recoveringC5){
-      const companyLead=window.TRAINING_DATA.c6CompanionLead?.[session.clientId];
-      if(companyLead){
+      const companyTail=window.TRAINING_DATA.c6CompanionTail?.[session.clientId];
+      if(companyTail){
         const standardIndex=answers.findIndex(answer=>answer.events?.includes('C6'));
         const target=standardIndex<0?0:standardIndex;
         answers=answers.map((answer,index)=>index===target?{
           ...answer,
-          text:answer.text.replace(/^((?:Алексей|Максим|Елена|Илья), )?([а-яё])/iu,
-            (_,address,first)=>(address || '')+(address && session.nameKnown
-              ? companyLead.charAt(0).toLocaleLowerCase('ru')+companyLead.slice(1)
-              : companyLead)+first.toLocaleLowerCase('ru')),
+          text:answer.text.replace(/\?$/u, companyTail+'?'),
           companionContext:true
         }:answer);
       }
@@ -139,7 +136,11 @@ window.TrainingEngine = (() => {
       if(!reopensExperience){
         answers=answers.map(answer=>({
           ...answer,
-          text:recovery && !['C2','C3'].includes(criterion) && (answer.events.includes(criterion)||!['C4','C5','C6'].includes(criterion)) ? joinRecovery(recovery,answer.text) : answer.text,
+          text:recovery && criterion==='C6' && answer.events.includes('C6') && (companyDisclosed || need==='both')
+            ? companyDisclosed ? answer.text.replace(/\?$/u, recovery+'?') : answer.text.replace('. ', '. '+recovery)
+            : recovery && !['C2','C3'].includes(criterion) && (answer.events.includes(criterion)||!['C4','C5','C6'].includes(criterion))
+              ? joinRecovery(recovery,answer.text)
+              : answer.text,
           recoveryFrom:session.lastFailedCriterion,
           recoveryOutcome:session.lastOutcome
         }));
@@ -166,8 +167,16 @@ window.TrainingEngine = (() => {
     const nextStep=answer.returnTo?session.context.steps.findIndex(step=>step[0]===answer.returnTo):session.step+1;
     const next={...session,answers:[...session.answers,trackedAnswer],trust:Math.max(0,Math.min(100,session.trust+trustDelta)),roughRun:answer.rough?session.roughRun+1:0,revealedClues:clueIds.size,revealedClueIds:[...clueIds],earlyPriceLeak:session.earlyPriceLeak||earlyLeakTriggered,step:nextStep>=0?nextStep:session.step+1,lastOutcome:turnOutcome,lastFailedCriterion:turnOutcome==='standard'?null:criterion,failedCriteria,lastClientReply:trackedAnswer.reply||'',nameKnown};
     if(next.trust<=15||next.roughRun>=2){next.done=true;next.outcome='hangup';return next;}
-    if(next.step>=session.context.steps.length){next.done=true;const r=result(next);next.outcome=r.passed?'iron':next.answers.some(a=>a.events.includes('C9'))?'cold':'think';}
+    if(next.step>=session.context.steps.length){next.done=true;next.outcome=result(next).outcome;}
     return next;
+  }
+  function timeout(session){
+    const criterion=session.context.steps?.[session.step]?.[0];
+    if(session.done || !criterion)return session;
+    const trust=Math.max(0,session.trust-8);
+    const timeouts=[...(session.timeouts||[]),{criterion,trustBefore:session.trust,trustAfter:trust}];
+    if(trust<=15)return {...session,trust,timeouts,done:true,outcome:'hangup'};
+    return {...session,trust,timeouts};
   }
   function score(s){
     const got = new Set(s.answers.flatMap(answer => answer.events));
@@ -176,6 +185,16 @@ window.TrainingEngine = (() => {
     if (!greetingCompleted || !s.nameKnown || namedTurns < 2) got.delete('C1');
     return Object.fromEntries(window.TRAINING_DATA.checklist.map(c => [c.id, got.has(c.id) ? 2 : 0]));
   }
-  function result(s){const scores=score(s),total=Object.values(scores).reduce((a,b)=>a+b,0);return {scores,total,earlyPriceLeak:Boolean(s.earlyPriceLeak),passed:!s.earlyPriceLeak&&total>=16&&scores.C4===2&&scores.C9===2&&scores.C10===2,outcome:s.outcome};}
-  return {start,options,choose,score,result,mix};
+  function result(s){
+    const scores=score(s),total=Object.values(scores).reduce((a,b)=>a+b,0);
+    const passed=s.outcome!=='hangup'&&!s.earlyPriceLeak&&total>=16&&scores.C4===2&&scores.C9===2&&scores.C10===2;
+    let outcome=s.outcome;
+    if(s.done && outcome!=='hangup'){
+      const agreement=s.answers.findLast(answer=>answer.visitAgreement)?.visitAgreement;
+      if(agreement==='confirmed'&&passed)outcome='iron';
+      else outcome=agreement==='confirmed'||agreement==='accepted'?'cold':'think';
+    }
+    return {scores,total,earlyPriceLeak:Boolean(s.earlyPriceLeak),passed,outcome};
+  }
+  return {start,options,choose,timeout,score,result,mix};
 })();

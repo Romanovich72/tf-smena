@@ -37,7 +37,7 @@ function recoveryLead(clientId, failedCriterion, session) {
   if (failedCriterion === 'C6') {
     if(/дорог|маршрут|сколько обычно занимает|время в пути|какой вечерний слот/i.test(session.lastClientReply||''))
       return window.TRAINING_DATA.c6ReplyRecovery.route[clientId];
-    if(/сервис|сопровожд|встреч|очеред/i.test(session.lastClientReply||''))return window.TRAINING_DATA.c6ReplyRecovery.service[clientId];
+    if(/сервис|сопровожд|встреч|очеред|по шагам|первые упражнения|тренер/i.test(session.lastClientReply||''))return window.TRAINING_DATA.c6ReplyRecovery.service[clientId];
     if(/не одному|не одна|вместе|друг|подруг|супруг|коллег|близк/i.test(session.lastClientReply||''))return window.TRAINING_DATA.c6ReplyRecovery.companion[clientId];
     if (session.revealedClueIds.includes('C4')) return window.TRAINING_DATA.c6NeedRecovery[clientId];
     if (session.revealedClueIds.includes('C3')) return window.TRAINING_DATA.c6ExperienceRecovery[clientId];
@@ -642,7 +642,8 @@ test('C5 disclosure is echoed in C6 and C4 hesitation is bridged before C5', () 
     const best = c6.answers.find(answer => answer.events.includes('C6'));
     assert.ok(best, `${client.id}: a revealed need unlocks the standard C6 presentation`);
     assert.ok(best.companionContext, `${client.id}: C6 presentation acknowledges the company fact`);
-    assert.match(best.text, /супруг|коллег|друг/i, `${client.id}: C6 starts with an explicit company reference`);
+    assert.match(best.text.slice(best.text.lastIndexOf('. ') + 2), /супруг|коллег|друг/i,
+      `${client.id}: C6 includes the companion in the closing question`);
   }
 });
 
@@ -774,14 +775,14 @@ test('C2 получает согласие, а C6 показывает два н
       assert.match(offer.text, /^[^?]+\?$/u);
       if (clues.length === 2) {
         const features = {
-          analyst: [/бассейн 25 метров/, /термальная зона/],
-          driver: [/парковка/, /дублирующими тренажёрами/],
-          woman: [/взрослая чаша/, /сопровождение менеджера/, /СПА-зону/],
-          novice: [/инструктаж/, /кардио-зона/]
+          analyst: [/бассейн 25 метров/, /термальная зона/i],
+          driver: [/парковка/i, /дублирующ.*тренажёр/i],
+          woman: [/взрослая чаша/i, /личный менеджер/, /СПА/],
+          novice: [/инструктаж/, /кардио-зон/]
         };
         for (const feature of features[client.id]) assert.match(offer.text, feature);
       }
-      assert.doesNotMatch(offer.text, /в прошлом|в прежнем|в старый зал/i);
+      if (!clues.includes('C3')) assert.doesNotMatch(offer.text, /в прошлом|в прежнем|в старый зал/i);
     }
   }
 });
@@ -927,4 +928,154 @@ test('C1 оценивает обращения в отдельных выбра�
   const firstNamed = TrainingEngine.options(unnamed).answers.find(a => a.events.includes('C2'));
   unnamed = TrainingEngine.choose(unnamed, {...firstNamed, text:address});
   assert.equal(TrainingEngine.result(unnamed).scores.C1, 0);
+});
+
+test('C6 сохраняет четыре состояния раскрытия во всех восьми контекстах', () => {
+  const data = window.TRAINING_DATA;
+  const recap = {
+    analyst: [/раньше.*тесно/i, /плавать в своём темпе.*спину/i],
+    driver: [/раньше.*дорог/i, /успевать в зал после работы/i],
+    woman: [/в прежнем клубе.*шум и очереди/i, /поплавать и переключиться/i],
+    novice: [/первый опыт/i, /выносливость без перегруза/i]
+  };
+  const names = {analyst:'Алексей', driver:'Максим', woman:'Елена', novice:'Илья'};
+  let longestStandards = 0;
+
+  for (const client of clients) {
+    for (const [opening] of client.starts.entries()) {
+      for (const missed of [[], ['C3'], ['C4'], ['C3','C4']]) {
+        let session = TrainingEngine.start(client, 'practice', opening);
+        while (TrainingEngine.options(session).criterion !== 'C6') {
+          const {criterion, answers} = TrainingEngine.options(session);
+          const answer = missed.includes(criterion)
+            ? answers.find(a => a.id.endsWith('-2'))
+            : answers.find(a => a.events.includes(criterion));
+          session = TrainingEngine.choose(session, answer);
+        }
+
+        assert.deepEqual(session.revealedClueIds, ['C3','C4','C5'].filter(id => !missed.includes(id)));
+        const {answers} = TrainingEngine.options(session);
+        assert.equal(answers.length, 4);
+        assert.equal(new Set(answers.map(a => a.reply)).size, 4);
+        const standards = answers.filter(a => a.events.includes('C6'));
+        assert.equal(standards.length, missed.length === 2 ? 0 : 1);
+
+        for (const a of answers) {
+          assert.match(a.text, /^[^?]+\?$/u);
+          assert.ok(a.reply.trim());
+          const next = TrainingEngine.choose(session, a);
+          assert.equal(next.lastClientReply, a.reply);
+          assert.equal(TrainingEngine.score(next).C6, a.events.includes('C6') ? 2 : 0);
+          assert.equal(next.trust - session.trust, a.delta - (next.answers.at(-1).earlyLeakTriggered ? 8 : 0));
+          if (!next.done) assert.equal(TrainingEngine.options(next).criterion, 'C9');
+        }
+
+        if (missed.length === 0) {
+          const standard = standards[0];
+          const summary = standard.text.split('. ')[0];
+          for (const fact of recap[client.id]) assert.match(summary, fact);
+          assert.equal(standard.companionContext, true);
+          assert.ok(standard.text.endsWith(data.c6CompanionTail[client.id] + '?'));
+          const lengths = answers.map(a => a.text.length);
+          assert.ok(Math.max(...lengths) / Math.min(...lengths) <= 1.5);
+          if (standard.text.length === Math.max(...lengths)) longestStandards++;
+        } else if (missed.length === 1) {
+          const unknown = recap[client.id][missed[0] === 'C3' ? 0 : 1];
+          assert.ok(answers.every(a => !unknown.test(a.text)));
+        } else {
+          assert.ok(answers.every(a => !/(бассейн|спин|выносливост)/iu.test(a.text)));
+        }
+
+        const withoutName = TrainingEngine.options({...session, nameKnown:false});
+        assert.ok(withoutName.answers.every(a => !a.text.includes(names[client.id])));
+      }
+
+      let recovering = TrainingEngine.start(client, 'practice', opening);
+      while (TrainingEngine.options(recovering).criterion !== 'C5') {
+        const {criterion, answers} = TrainingEngine.options(recovering);
+        recovering = TrainingEngine.choose(recovering, answers.find(a => a.events.includes(criterion)));
+      }
+      for (const missedC5 of TrainingEngine.options(recovering).answers.filter(a => !a.events.includes('C5'))) {
+        const next = TrainingEngine.choose(recovering, missedC5);
+        const standard = TrainingEngine.options(next).answers.find(a => a.events.includes('C6'));
+        assert.equal(standard.recoveryFrom, 'C5');
+        for (const fact of recap[client.id]) assert.match(standard.text.split('. ')[0], fact);
+        const lead = recoveryLead(client.id, 'C5', next);
+        assert.ok(Object.values(data.c5RecoveryCopy[client.id]).includes(lead));
+        assert.equal(standard.text.split(lead).length, 2);
+        assert.equal(standard.text.split(names[client.id]+',').length, 2);
+        if (lead === data.c6CompanionTail[client.id]) {
+          assert.ok(standard.text.endsWith(lead + '?'));
+        }
+      }
+    }
+  }
+  assert.ok(longestStandards <= 4, 'the standard is not consistently the longest choice');
+});
+
+test('Фактическое согласие на визит и зачёт звонка определяются отдельно', () => {
+  function play(client, opening, select, initialTrust=50) {
+    let call={...TrainingEngine.start(client,'practice',opening),trust:initialTrust};
+    while(!call.done){
+      const {criterion,answers}=TrainingEngine.options(call);
+      const answer=select(criterion,answers) || answers.find(a=>a.events.includes(criterion));
+      assert.ok(answer);
+      call=TrainingEngine.choose(call,answer);
+    }
+    return call;
+  }
+  for(const client of clients)for(const opening of client.starts.keys()){
+    const ideal=play(client,opening,()=>null);
+    const result=TrainingEngine.result(ideal);
+    assert.deepEqual([result.total,result.scores.C1,result.scores.C6,result.outcome,result.passed],[20,2,2,'iron',true]);
+    assert.equal(ideal.answers.find(a=>a.events.includes('C9')).visitAgreement,undefined);
+    assert.equal(ideal.answers.at(-1).visitAgreement,'confirmed');
+    const hangup=TrainingEngine.result({...ideal,outcome:'hangup'});
+    assert.deepEqual([hangup.total,hangup.outcome,hangup.passed],[20,'hangup',false]);
+
+    const noConfirmation=play(client,opening,(id,answers)=>id==='C10'?answers.find(a=>!a.events.length&&!a.rough):null);
+    assert.deepEqual([noConfirmation.outcome,TrainingEngine.result(noConfirmation).passed],['think',false]);
+    const accepted={...noConfirmation,answers:noConfirmation.answers.map((a,i)=>i===noConfirmation.answers.length-1?{...a,visitAgreement:'accepted'}:a)};
+    assert.deepEqual([TrainingEngine.result(accepted).outcome,TrainingEngine.result(accepted).passed],['cold',false]);
+
+    const missedInvite=play(client,opening,(id,answers)=>id==='C9'?answers.find(a=>!a.events.length&&!a.rough):null);
+    assert.equal(missedInvite.lastClientReply,ideal.lastClientReply);
+    assert.deepEqual([TrainingEngine.result(missedInvite).total,missedInvite.outcome,TrainingEngine.result(missedInvite).passed],[18,'cold',false]);
+
+    const forbidden=play(client,opening,(id,answers)=>id==='C7'?answers.find(a=>/89 100/u.test(a.text)):null);
+    assert.equal(forbidden.earlyPriceLeak,true);
+    assert.equal(TrainingEngine.result(forbidden).passed,false);
+  }
+  const client=clients[0];
+  const rough=(criterion,answers)=>answers.find(a=>a.rough);
+  const low=play(client,0,rough,30);
+  assert.deepEqual([low.answers.length,low.outcome,TrainingEngine.result(low).passed],[1,'hangup',false]);
+  const twice=play(client,0,rough);
+  assert.deepEqual([twice.answers.length,twice.roughRun,twice.outcome,TrainingEngine.result(twice).passed],[2,2,'hangup',false]);
+});
+
+test('Тайм-ауты учитывают только время и доверие, сохраняя выбранные ходы', () => {
+  const client=clients[0];
+  let call=TrainingEngine.start(client,'practice',0);
+  for(let i=0;i<3;i++){
+    const {criterion,answers}=TrainingEngine.options(call);
+    call=TrainingEngine.choose(call,answers.find(a=>a.events.includes(criterion)));
+  }
+  const before=TrainingEngine.result(call);
+  const timed=TrainingEngine.timeout(TrainingEngine.timeout(call));
+  assert.deepEqual(timed.timeouts,[
+    {criterion:'C4',trustBefore:call.trust,trustAfter:call.trust-8},
+    {criterion:'C4',trustBefore:call.trust-8,trustAfter:call.trust-16}
+  ]);
+  assert.strictEqual(timed.answers,call.answers);
+  assert.strictEqual(timed.revealedClueIds,call.revealedClueIds);
+  assert.equal(timed.step,call.step);
+  assert.equal(timed.roughRun,call.roughRun);
+  assert.deepEqual(TrainingEngine.result(timed),before);
+  assert.equal(call.timeouts,undefined);
+  const terminal=TrainingEngine.timeout({...timed,trust:23});
+  assert.deepEqual([terminal.trust,terminal.done,terminal.outcome],[15,true,'hangup']);
+  assert.strictEqual(TrainingEngine.timeout(terminal),terminal);
+  assert.equal(TrainingEngine.result(terminal).total,before.total);
+  assert.equal(TrainingEngine.result(terminal).passed,false);
 });

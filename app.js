@@ -1,23 +1,24 @@
 // Автор проекта и разработки: Павел Аринин, 2026.
 (() => {
   const root=document.querySelector('#app'),D=window.TRAINING_DATA;
+  const callMax=2*D.checklist.length;
   let shiftRoster=[],drillRoster=[];
   let page='home',mode='shift',client=null,session=null,filter='all',shiftCalls=[];
   const storage={get:key=>{try{return localStorage.getItem(key)}catch{return null}},set:(key,value)=>{try{localStorage.setItem(key,value)}catch{}},remove:key=>{try{localStorage.removeItem(key)}catch{}}};
   let pressure=storage.get('tf-noir-pressure-v1')==='true',soundOn=storage.get('tf-noir-sound-v1')!=='false';
-  let timerId=null,seconds=33,rushLine='',trustFX='',cachedOptions=null,cachedKey='',identity=TrainingReport.identity(),drill=null,audio=null;
+  let timerId=null,rushLine='',trustFX='',cachedOptions=null,cachedKey='',identity=TrainingReport.identity(),drill=null,audio=null;
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const plainStopPhrase=s=>String(s??'').trim().replace(/^[«“"]+/, '').replace(/[»”"]+$/, '');
   const personalize=s=>String(s??'').replaceAll('Анастасия',()=>identity.name||'Анастасия').replaceAll('Южное Бутово',()=>identity.club||'Южное Бутово');
   function shell(content){
     root.innerHTML=`<header class="top"><a class="brand" href="#" data-go="home">ТФ <span> / НОЧНАЯ СМЕНА</span></a><nav><button data-go="home">Тренажёр</button><button data-go="profile">Профиль</button><button id="soundToggle" class="sound-toggle" aria-pressed="${soundOn}">${soundOn?'♫ Звук: вкл':'♫ Звук: выкл'}</button></nav></header>${content}<footer>РЕЗУЛЬТАТИВНЫЙ ВХОДЯЩИЙ ЗВОНОК 2.0 <span>·</span> СТАНДАРТ ТФ <span>·</span> РАЗРАБОТКА: ПАВЕЛ АРИНИН</footer>`;
     document.onkeydown=e=>{if(!/^[1-4]$/.test(e.key)||e.altKey||e.ctrlKey||e.metaKey)return;const target=e.target,tag=target?.tagName?.toLowerCase();if(['input','textarea','select'].includes(tag)||target?.isContentEditable)return;const button=root.querySelectorAll('.choices .answer')[Number(e.key)-1];if(button){e.preventDefault();button.click()}};
-    root.querySelectorAll('[data-go]').forEach(b=>b.onclick=e=>{e.preventDefault();clearInterval(timerId);page=b.dataset.go;render()});
+    root.querySelectorAll('[data-go]').forEach(b=>b.onclick=e=>{e.preventDefault();stopTimer();page=b.dataset.go;render()});
     root.querySelector('#soundToggle').onclick=e=>{soundOn=!soundOn;storage.set('tf-noir-sound-v1',String(soundOn));e.currentTarget.textContent=soundOn?'♫ Звук: вкл':'♫ Звук: выкл';e.currentTarget.setAttribute('aria-pressed',String(soundOn));if(soundOn)playSound('click')};
   }
   function render(){if(page==='home')home();else if(page==='choose')chooseScreen();else if(page==='call')call();else if(page==='result')result();else if(page==='profile')profile();else if(page==='drill')drillScreen()}
   function home(){
-    shell(`<main class="hero" style="--hero:url('assets/${D.sessionStart}')"><div class="eyebrow">СИМУЛЯТОР ВХОДЯЩИХ ЗВОНКОВ · ВЕРСИЯ 2.0</div><h1>Каждый звонок<br><em>меняет смену.</em></h1><p>В каждой смене — три случайных клиента из четырёх. Десять критериев. Один стандарт качества.</p><div class="actions"><button class="primary" id="shift">▶ Утренний блиц-спринт · 3 клиента</button><button class="secondary" id="free">Свободная тренировка</button></div><div class="micro">ЧЕСТНАЯ ПЕРЕМЕШКА <i>·</i> РАСКРЫТИЕ МОТИВА <i>·</i> РАЗБОР ПО СТАНДАРТУ</div></main><section class="setup"><div class="eyebrow">ПАРАМЕТРЫ СМЕНЫ</div><div class="setup-grid"><label>Имя менеджера<input id="managerName" maxlength="60" value="${esc(identity.name)}" placeholder="Например, Анна"></label><label>Клуб<input id="managerClub" maxlength="80" value="${esc(identity.club)}" placeholder="Например, Южное Бутово"></label><label class="pressure-toggle"><input id="pressureMode" type="checkbox" ${pressure?'checked':''}><span><b>Под давлением</b><small>33 секунды на ответ · таймер можно выключить</small></span><i class="switch"></i></label></div></section><section class="roster"><div class="eyebrow">ПСИХОТИПЫ СИМУЛЯТОРА</div><div class="cards">${D.clients.map(c=>`<article class="client" style="--pic:url('assets/${c.image}')"><b>${esc(c.name)}</b><span>${esc(c.persona)}</span></article>`).join('')}</div></section>`);
+    shell(`<main class="hero" style="--hero:url('assets/${D.sessionStart}')"><div class="eyebrow">СИМУЛЯТОР ВХОДЯЩИХ ЗВОНКОВ · ВЕРСИЯ 2.0</div><h1>Каждый звонок<br><em>меняет смену.</em></h1><p>За смену вы принимаете звонки всех клиентов в случайном порядке.</p><div class="actions"><button class="primary" id="shift">▶ Рабочая смена · ${D.clients.length} звонка</button><button class="secondary" id="free">Свободная тренировка</button></div><div class="micro">ЧЕСТНАЯ ПЕРЕМЕШКА <i>·</i> РАСКРЫТИЕ МОТИВА <i>·</i> РАЗБОР ПО СТАНДАРТУ</div></main><section class="setup"><div class="eyebrow">ПАРАМЕТРЫ СМЕНЫ</div><div class="setup-grid"><label>Имя менеджера<input id="managerName" maxlength="60" value="${esc(identity.name)}" placeholder="Например, Анна"></label><label>Клуб<input id="managerClub" maxlength="80" value="${esc(identity.club)}" placeholder="Например, Южное Бутово"></label><label class="pressure-toggle"><input id="pressureMode" type="checkbox" ${pressure?'checked':''}><span><b>Под давлением</b><small>33 секунды на ответ · таймер можно выключить</small></span><i class="switch"></i></label></div></section><section class="roster"><div class="eyebrow">ПСИХОТИПЫ СИМУЛЯТОРА</div><div class="cards">${D.clients.map(c=>`<article class="client" style="--pic:url('assets/${c.image}')"><b>${esc(c.name)}</b><span>${esc(c.persona)}</span></article>`).join('')}</div></section>`);
     const save=()=>{identity={name:root.querySelector('#managerName').value.trim(),club:root.querySelector('#managerClub').value.trim()};TrainingReport.saveIdentity(identity)};
     root.querySelector('#managerName').oninput=save;root.querySelector('#managerClub').oninput=save;
     root.querySelector('#pressureMode').onchange=e=>{pressure=e.target.checked;storage.set('tf-noir-pressure-v1',String(pressure))};
@@ -27,14 +28,15 @@
   function begin(i){
     if(i===0){
       shiftCalls=[];
-      shiftRoster=TrainingEngine.mix(D.clients).slice(0,3);
+      shiftRoster=TrainingEngine.mix(D.clients);
     }
     if(i>=shiftRoster.length){page='result';render();return}
     beginClient(shiftRoster[i],i);
   }
-  function beginClient(c,index=0,contextIndex=null){clearInterval(timerId);client=c;session=TrainingEngine.start(c,mode,contextIndex);session.shiftIndex=index;session.contextIndex=c.starts.indexOf(session.context);cachedOptions=null;cachedKey='';rushLine='';trustFX='';page='call';render()}
+  function beginClient(c,index=0,contextIndex=null){stopTimer();client=c;session=TrainingEngine.start(c,mode,contextIndex);session.shiftIndex=index;session.contextIndex=c.starts.indexOf(session.context);cachedOptions=null;cachedKey='';rushLine='';trustFX='';page='call';render()}
   function call(){
     const key=`${client.id}:${session.step}`;if(!cachedOptions||cachedKey!==key){cachedOptions=TrainingEngine.options(session);cachedKey=key}const opt=cachedOptions;if(!opt){finish();return}
+    const currentCall=session;
     const at=session.shiftIndex??0;
     const last=session.answers.at(-1),line=rushLine||last?.reply||session.context.prompt,fx=trustFX;trustFX='';
     const notes = ['ОПЫТ', 'ЗАДАЧА', 'ФОРМАТ'].flatMap((label, index) => {
@@ -42,13 +44,61 @@
       return [`<div class="clue"><span>${label}</span><p>${esc(client.dossier[index])}</p></div>`];
     });
     shell(`<main class="call" style="--portrait:url('assets/${esc(client.image)}')"><div class="calltop"><span class="eyebrow">${mode==='shift'?`РАБОЧАЯ СМЕНА · ЗВОНОК ${at+1} ИЗ ${shiftRoster.length}`:'ТРЕНИРОВКА · СВОБОДНЫЙ РЕЖИМ'}</span></div><div class="trust ${fx}"><span>ДОВЕРИЕ КЛИЕНТА</span><div><i style="width:${session.trust}%"></i></div><b>${session.trust}</b></div><section class="dialog"><div class="avatar"></div><div><div class="eyebrow">${esc(client.name.toUpperCase())}</div><p class="customer">${esc(line)}</p></div></section><aside class="dossier"><div class="dossier-head">ЗАМЕТКИ ПО ЗВОНКУ</div>${notes.length ? notes.join('') : '<p>Фиксируйте важные детали по ходу разговора — они появятся здесь</p>'}</aside>${pressure?`<div class="clockline"><span>⏱ <b id="timer">33</b> сек.</span><span>На ответ</span></div>`:''}${rushLine?`<div class="rush">${esc(rushLine)}</div>`:''}<section class="choices">${opt.answers.map((a,index)=>`<button class="answer"><span class="answer-key" aria-hidden="true">${index+1}</span><span class="answer-text">${esc(personalize(a.text))}</span></button>`).join('')}</section><div class="callbottom">ВХОДЯЩИЙ ЗВОНОК · ВЫБОР ОТВЕТА ВЛИЯЕТ НА ДОВЕРИЕ</div></main>`);
-    root.querySelectorAll('.choices .answer').forEach((b,index)=>b.onclick=()=>{clearInterval(timerId);const a=opt.answers[index];if(!a)return;const tracked={...a,criterion:opt.criterion,stopword:D.findStopPhrase(a,opt.criterion)},before=session.trust;session=TrainingEngine.choose(session,tracked);trustFX=session.trust>before?'trust-up':session.trust<before?'trust-down':'';rushLine='';if(session.done){playSound(session.outcome==='hangup'?'hangup':session.outcome==='iron'?'success':a.events.includes(opt.criterion)?'correct':'error');finish()}else{playSound(a.events.includes(opt.criterion)?'correct':'error');render()}});
+    root.querySelectorAll('.choices .answer').forEach((button,index)=>button.onclick=()=>{
+      if(page!=='call'||session!==currentCall||session.done)return;
+      const answer=opt.answers[index];
+      if(!answer)return;
+      stopTimer();
+      const before=session.trust;
+      session=TrainingEngine.choose(session,{...answer,criterion:opt.criterion,stopword:D.findStopPhrase(answer,opt.criterion)});
+      trustFX=session.trust>before?'trust-up':session.trust<before?'trust-down':'';
+      rushLine='';
+      if(session.done){finish();return}
+      playSound('click');
+      render();
+    });
     if(pressure)startTimer();
   }
-  function startTimer(){clearInterval(timerId);seconds=33;const el=root.querySelector('#timer');timerId=setInterval(()=>{seconds--;if(el)el.textContent=String(seconds);if(seconds<=0){clearInterval(timerId);session.trust=Math.max(0,session.trust-8);trustFX='trust-down';if(session.trust<=15){session.done=true;session.outcome='hangup';playSound('hangup');finish();return}playSound('error');rushLine='Извините, я очень ограничен(а) по времени. Давайте быстрее, пожалуйста.';call()}},1000)}
-  function finish(){clearInterval(timerId);const res=TrainingEngine.result(session),record={type:mode,clientId:client.id,clientName:client.name,date:new Date().toISOString(),result:res,outcome:res.outcome,trust:session.trust,earlyPriceLeak:session.earlyPriceLeak,answers:session.answers,contextIndex:session.contextIndex,contextPrompt:session.context.prompt};TrainingReport.save(record);if(mode==='shift'){shiftCalls.push({clientName:client.name,...record});if(session.shiftIndex<shiftRoster.length-1){begin(session.shiftIndex+1);return}}page='result';render()}
-  function outcomeLabel(o){return ({iron:'Железная запись',cold:'Холодная запись · риск недоезда',think:'Ушёл думать / в мессенджер',hangup:'Слив · клиент бросил трубку'})[o]||'Звонок завершён'}
-  function review(record,isFullShift=false){const missed=D.checklist.filter(c=>record.result.scores[c.id]===0);if(!missed.length)return '';return `<details class="miss-review"><summary>${isFullShift?`${esc(record.clientName)} · `:''}${missed.length} критериев без баллов — раскрыть разбор</summary>${missed.map(c=>{const picked=(record.answers||[]).find(a=>a.criterion===c.id||a.id?.includes(`-${c.id}-`));const quote=String(c.quote||'').trim().replace(/^[«“”"]/, '').replace(/[»“”"]+[.!?…]*$/, '');return `<article class="review-card"><h3>${c.id} · ${esc(c.title)} <small>0/2</small></h3><p><b>Что ты выбрал:</b> ${picked?esc(personalize(picked.text)):'Этап не достигнут — звонок завершился до этого шага.'}</p>${picked?.earlyLeakTriggered?`<div class="stopword-feedback"><b>РАННЯЯ УТЕЧКА · ДОВЕРИЕ −8</b><p>Менеджер назвал годовую сумму или перешёл к стоимости и презентации до раскрытия двух улик. Клиент сильнее сопротивляется стоимости и хуже соглашается на визит.</p></div>`:''}${picked?.stopword?`<div class="stopword-feedback"><b>СТОП-ФРАЗА</b> · «${esc(picked.stopword.phrase)}»<p>Замена по стандарту: <q>${esc(picked.stopword.quote)}</q></p></div>`:''}<p><b>Почему это ошибка:</b> ${esc(c.rule)}</p><p><b>Эталон из методички:</b> <span class="review-quote">«${esc(quote)}»</span></p></article>`}).join('')}</details>`}
+  function stopTimer(){
+    clearInterval(timerId);
+    timerId=null;
+  }
+  function startTimer(){
+    stopTimer();
+    let seconds=33;
+    const timer=root.querySelector('#timer');
+    const currentCall=session;
+    const id=setInterval(()=>{
+      if(timerId!==id||page!=='call'||session!==currentCall||session.done)return;
+      timer.textContent=String(--seconds);
+      if(seconds>0)return;
+      stopTimer();
+      session=TrainingEngine.timeout(session);
+      trustFX='trust-down';
+      if(session.done){finish();return}
+      playSound('timeout');
+      rushLine='Извините, я очень ограничен(а) по времени. Давайте быстрее, пожалуйста.';
+      call();
+    },1000);
+    timerId=id;
+  }
+  function finish(){
+    if(page!=='call'||!session.done)return;
+    stopTimer();
+    const res=TrainingEngine.result(session);
+    playSound(res.outcome==='hangup'?'hangup':res.outcome==='iron'?'success':'click');
+    const record={type:mode,clientId:client.id,clientName:client.name,date:new Date().toISOString(),result:res,outcome:res.outcome,trust:session.trust,earlyPriceLeak:session.earlyPriceLeak,answers:session.answers,contextIndex:session.contextIndex,contextPrompt:session.context.prompt};
+    if(session.timeouts?.length)record.timeouts=session.timeouts;
+    TrainingReport.save(record);
+    if(mode==='shift'){
+      shiftCalls.push(record);
+      if(session.shiftIndex<shiftRoster.length-1){begin(session.shiftIndex+1);return}
+    }
+    page='result';
+    render();
+  }
+  function outcomeLabel(o){return ({iron:'Железная запись',cold:'Визит согласован',think:'Ушёл думать / в мессенджер',hangup:'Слив · клиент бросил трубку'})[o]||'Звонок завершён'}
+  function review(record,isFullShift=false){const missed=D.checklist.filter(c=>record.result.scores[c.id]===0);const timing=TrainingReport.timeoutSummary(record);const note=timing?`<p class="note">${isFullShift?`<b>${esc(record.clientName)}</b> · `:''}${esc(timing)}</p>`:'';if(!missed.length)return note;return note+`<details class="miss-review"><summary>${isFullShift?`${esc(record.clientName)} · `:''}${missed.length} критериев без баллов — раскрыть разбор</summary>${missed.map(c=>{const picked=(record.answers||[]).find(a=>a.criterion===c.id||a.id?.includes(`-${c.id}-`));const quote=String(c.quote||'').trim().replace(/^[«“”"]/, '').replace(/[»“”"]+[.!?…]*$/, '');return `<article class="review-card"><h3>${c.id} · ${esc(c.title)} <small>0/2</small></h3><p><b>Что ты выбрал:</b> ${picked?esc(personalize(picked.text)):'Этап не достигнут — звонок завершился до этого шага.'}</p>${picked?.earlyLeakTriggered?`<div class="stopword-feedback"><b>РАННЯЯ УТЕЧКА · ДОВЕРИЕ −8</b><p>Менеджер назвал годовую сумму или перешёл к стоимости и презентации до раскрытия двух улик. Клиент сильнее сопротивляется стоимости и хуже соглашается на визит.</p></div>`:''}${picked?.stopword?`<div class="stopword-feedback"><b>СТОП-ФРАЗА</b> · «${esc(picked.stopword.phrase)}»<p>Замена по стандарту: <q>${esc(picked.stopword.quote)}</q></p></div>`:''}<p><b>Почему это ошибка:</b> ${esc(c.rule)}</p><p><b>Эталон из методички:</b> <span class="review-quote">«${esc(quote)}»</span></p></article>`}).join('')}</details>`}
   function replay(record){
     mode='practice';
     const replayClient=D.clients.find(c=>c.id===record.clientId)||client;
@@ -57,11 +107,11 @@
   function result(){
     const last=TrainingEngine.result(session),isFullShift=mode==='shift'&&shiftCalls.length===shiftRoster.length;
     const res=isFullShift?{total:shiftCalls.reduce((n,c)=>n+c.result.total,0),scores:Object.fromEntries(D.checklist.map(c=>[c.id,Math.round(shiftCalls.reduce((n,x)=>n+x.result.scores[c.id],0)/shiftRoster.length)])),earlyPriceLeak:shiftCalls.some(c=>c.earlyPriceLeak),passed:shiftCalls.every(c=>c.result.passed),outcome:shiftCalls.every(c=>c.result.passed)?'iron':shiftCalls.some(c=>c.outcome==='hangup')?'hangup':'think'}:last;
-    const record=isFullShift?null:TrainingReport.read().at(-1),max=isFullShift?60:20;
-    const detail=isFullShift?`<div class="criteria">${shiftCalls.map(c=>`<div class="criterion ${c.result.passed?'ok':'miss'}"><b>${esc(c.clientName)}</b><span>${outcomeLabel(c.outcome)}</span><strong>${c.result.total}/20</strong></div>`).join('')}</div>${shiftCalls.map(c=>review(c,true)).join('')}`:`<div class="criteria">${D.checklist.map(c=>`<div class="criterion ${res.scores[c.id]===2?'ok':'miss'}"><b>${c.id}</b><span>${esc(c.title)}</span><strong>${res.scores[c.id]}/2</strong></div>`).join('')}</div>${review(record||{result:res,answers:session.answers})}`;
+    const record=isFullShift?null:TrainingReport.read().at(-1),max=isFullShift?callMax*shiftRoster.length:callMax;
+    const detail=isFullShift?`<div class="criteria">${shiftCalls.map(c=>`<div class="criterion ${c.result.passed?'ok':'miss'}"><b>${esc(c.clientName)}</b><span>${outcomeLabel(c.outcome)}</span><strong>${c.result.total}/${callMax}</strong></div>`).join('')}</div>${shiftCalls.map(c=>review(c,true)).join('')}`:`<div class="criteria">${D.checklist.map(c=>`<div class="criterion ${res.scores[c.id]===2?'ok':'miss'}"><b>${c.id}</b><span>${esc(c.title)}</span><strong>${res.scores[c.id]}/2</strong></div>`).join('')}</div>${review(record||{result:res,answers:session.answers,timeouts:session.timeouts})}`;
     const replayRecord=isFullShift?shiftCalls.at(-1):record;
-    shell(`<main class="result ${isFullShift?'noir-card':''}" style="--hero:url('assets/${D.manager}')"><div class="eyebrow">${isFullShift?'НУАР-КАРТОЧКА СМЕНЫ':mode==='shift'?'РАЗБОР СМЕНЫ':'РАЗБОР ТРЕНИРОВКИ'}</div><h1>${res.total}<small> / ${max}</small></h1><div class="outcome ${res.passed?'good':'bad'}">${isFullShift?'Результат по трём звонкам':outcomeLabel(res.outcome)} · ${res.passed?'УСПЕШНО':'НЕ ЗАСЧИТАНО'}</div><p>${res.earlyPriceLeak?'Нарушение правил подачи цены или презентации снизила доверие и помешала засчитать запись.' : isFullShift?'Каждый звонок оценён отдельно по порогу 16/20 и обязательным этапам.':res.passed?'Обязательные этапы закрыты, звонок соответствует порогу.':'Для успешной записи нужно 16/20 и по 2 балла в C4, C9 и C10.'}</p>${detail}<div class="actions"><button class="primary" id="copy">Скопировать отчёт для РОПа</button><button class="secondary" id="replay">Переиграть этот звонок</button><button class="secondary" id="again">${mode==='shift'?'Новая смена':'Ещё тренировка'}</button><button class="secondary" id="profile">Профиль прогресса</button></div></main>`);
-    root.querySelector('#copy').onclick=async()=>{const misses=r=>D.checklist.filter(c=>r.result.scores[c.id]===0).map(c=>c.id),mandatoryMisses=r=>['C4','C9','C10'].filter(id=>r.result.scores[id]!==2);const status=r=>`${misses(r).length?`провалы (0/2): ${misses(r).join(', ')}`:'без провалов'} · ${mandatoryMisses(r).length?`обязательные этапы не закрыты: ${mandatoryMisses(r).join(', ')}`:'обязательные этапы C4, C9, C10 закрыты'} · ранняя утечка цены: ${r.earlyPriceLeak?'да':'нет'}`;const singleRecord=record||{type:mode,result:res,outcome:res.outcome,trust:session.trust,earlyPriceLeak:session.earlyPriceLeak,clientName:client.name,date:new Date().toISOString()};const attribution='Симулятор «Ночная смена» · Автор: Павел Аринин';const text=(isFullShift?`ТФ — ОТЧЁТ ПО СМЕНЕ\nМенеджер: ${identity.name||'не указан'} · Клуб: ${identity.club||'не указан'}\n${shiftCalls.map(c=>`${c.clientName}: ${c.result.total}/20 · ${outcomeLabel(c.outcome)} · ${c.result.passed?'зачтено':'не зачтено'} · ${status(c)}`).join('\n')}\nИтого ${res.total}/60`:`${TrainingReport.text(singleRecord)}\n${status(singleRecord)}`)+`\n${attribution}`;try{await navigator.clipboard.writeText(text);root.querySelector('#copy').textContent='Отчёт скопирован ✓'}catch{const t=document.createElement('textarea');t.value=text;document.body.append(t);t.select();document.execCommand('copy');t.remove();root.querySelector('#copy').textContent='Отчёт скопирован ✓'}};
+    shell(`<main class="result ${isFullShift?'noir-card':''}" style="--hero:url('assets/${D.manager}')"><div class="eyebrow">${isFullShift?'НУАР-КАРТОЧКА СМЕНЫ':mode==='shift'?'РАЗБОР СМЕНЫ':'РАЗБОР ТРЕНИРОВКИ'}</div><h1>${res.total}<small> / ${max}</small></h1><div class="outcome ${res.passed?'good':'bad'}">${isFullShift?'Результат рабочей смены':outcomeLabel(res.outcome)} · ${res.passed?'УСПЕШНО':'НЕ ЗАСЧИТАНО'}</div><p>${res.earlyPriceLeak?'Нарушение правил подачи цены или презентации снизила доверие и помешала засчитать запись.' : isFullShift?`Каждый звонок оценён отдельно по порогу 16/${callMax} и обязательным этапам.`:res.passed?'Обязательные этапы закрыты, звонок соответствует порогу.':`Для успешной записи нужно 16/${callMax} и по 2 балла в C4, C9 и C10.`}</p>${detail}<div class="actions"><button class="primary" id="copy">Скопировать отчёт для РОПа</button><button class="secondary" id="replay">Переиграть этот звонок</button><button class="secondary" id="again">${mode==='shift'?'Новая смена':'Ещё тренировка'}</button><button class="secondary" id="profile">Профиль прогресса</button></div></main>`);
+    root.querySelector('#copy').onclick=async()=>{const misses=r=>D.checklist.filter(c=>r.result.scores[c.id]===0).map(c=>c.id),mandatoryMisses=r=>['C4','C9','C10'].filter(id=>r.result.scores[id]!==2);const status=r=>`${misses(r).length?`провалы (0/2): ${misses(r).join(', ')}`:'без провалов'} · ${mandatoryMisses(r).length?`обязательные этапы не закрыты: ${mandatoryMisses(r).join(', ')}`:'обязательные этапы C4, C9, C10 закрыты'} · ранняя утечка цены: ${r.earlyPriceLeak?'да':'нет'}`;const singleRecord=record||{type:mode,result:res,outcome:res.outcome,trust:session.trust,earlyPriceLeak:session.earlyPriceLeak,timeouts:session.timeouts,clientName:client.name,date:new Date().toISOString()};const attribution='Симулятор «Ночная смена» · Автор: Павел Аринин';const text=(isFullShift?`ТФ — ОТЧЁТ ПО СМЕНЕ\nМенеджер: ${identity.name||'не указан'} · Клуб: ${identity.club||'не указан'}\n${shiftCalls.map(c=>`${c.clientName}: ${c.result.total}/${callMax} · ${outcomeLabel(c.outcome)} · ${c.result.passed?'зачтено':'не зачтено'} · ${status(c)}${c.timeouts?.length?` · ${TrainingReport.timeoutSummary(c)}`:''}`).join('\n')}\nИтого ${res.total}/${max} · ${res.passed?'смена зачтена':'смена не зачтена'}`:`${TrainingReport.text(singleRecord)}\n${status(singleRecord)}`)+`\n${attribution}`;try{await navigator.clipboard.writeText(text);root.querySelector('#copy').textContent='Отчёт скопирован ✓'}catch{const t=document.createElement('textarea');t.value=text;document.body.append(t);t.select();document.execCommand('copy');t.remove();root.querySelector('#copy').textContent='Отчёт скопирован ✓'}};
     root.querySelector('#replay').onclick=()=>replay(replayRecord||{clientId:client.id,contextIndex:session.contextIndex});
     root.querySelector('#again').onclick=()=>{mode=mode==='shift'?'shift':'practice';if(mode==='shift')begin(0);else{page='choose';chooseScreen()}};root.querySelector('#profile').onclick=()=>{page='profile';render()};
   }
@@ -98,6 +148,6 @@
     shell(`<main class="drill-view" style="--portrait:url('assets/${c.image}')"><div class="eyebrow">ОТРАБОТКА СЛАБОГО МЕСТА · РАУНД ${drill.round+1} ИЗ 3</div>${picked?`<h1>${esc(criterion.title)}</h1>`:''}<section class="dialog drill-dialog"><div class="avatar"></div><div><div class="eyebrow">${esc(c.name.toUpperCase())}</div><p class="customer">${esc(picked?picked.reply:drill.prompt)}</p><p class="context">${picked?`Ответ клиента на: «${esc(personalize(picked.text))}»`:''}</p></div></section>${picked?`<section class="drill-feedback ${picked.events.includes(drill.criterionId)?'correct':'incorrect'}"><b>${picked.events.includes(drill.criterionId)?'СТАНДАРТ СОБЛЮДЁН':'РАЗБЕРЁМ ОШИБКУ'}</b>${picked.events.includes(drill.criterionId)?'':`<p><strong>Почему это ошибка:</strong> ${esc(criterion.rule)}</p><p><strong>Эталон:</strong> <q>${esc(criterion.quote)}</q></p>`}<button class="primary" id="nextDrill">${drill.round===2?'Завершить отработку':'Дальше'}</button></section>`:`<section class="choices">${drill.options.map((a,index)=>`<button class="answer"><span class="answer-key" aria-hidden="true">${index+1}</span><span class="answer-text">${esc(personalize(a.text))}</span></button>`).join('')}</section>`}</main>`);
     if(picked)root.querySelector('#nextDrill').onclick=()=>{drill.round++;if(drill.round<3)loadDrillRound();page='drill';render()};else root.querySelectorAll('.choices .answer').forEach((b,index)=>b.onclick=()=>{drill.answer=drill.options[index];playSound(drill.answer.events.includes(drill.criterionId)?'correct':'error');render()});
   }
-  function playSound(kind){if(!soundOn)return;try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;audio=audio||new C();if(audio.state==='suspended')audio.resume();const now=audio.currentTime;const tones=kind==='success'?[[523,.24],[659,.3],[784,.36]]:kind==='hangup'?[[440,.13],[330,.18],[220,.24]]:kind==='correct'?[[740,.07],[980,.08]]:kind==='click'?[[880,.045]]:[[175,.13]];tones.forEach(([hz,dur],i)=>{const o=audio.createOscillator(),g=audio.createGain();o.type=kind==='error'?'triangle':'sine';o.frequency.setValueAtTime(hz,now+i*.09);g.gain.setValueAtTime(.0001,now+i*.09);g.gain.exponentialRampToValueAtTime(.12,now+i*.09+.012);g.gain.exponentialRampToValueAtTime(.0001,now+i*.09+dur);o.connect(g);g.connect(audio.destination);o.start(now+i*.09);o.stop(now+i*.09+dur+.01)})}catch{}}
+  function playSound(kind){if(!soundOn)return;try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;audio=audio||new C();if(audio.state==='suspended')audio.resume();const now=audio.currentTime;const tones=kind==='success'?[[523,.24],[659,.3],[784,.36]]:kind==='hangup'?[[440,.13],[330,.18],[220,.24]]:kind==='correct'?[[740,.07],[980,.08]]:kind==='click'?[[880,.045]]:[[175,.13]];tones.forEach(([hz,dur],i)=>{const o=audio.createOscillator(),g=audio.createGain();o.type=(kind==='error'||kind==='timeout')?'triangle':'sine';o.frequency.setValueAtTime(hz,now+i*.09);g.gain.setValueAtTime(.0001,now+i*.09);g.gain.exponentialRampToValueAtTime(.12,now+i*.09+.012);g.gain.exponentialRampToValueAtTime(.0001,now+i*.09+dur);o.connect(g);g.connect(audio.destination);o.start(now+i*.09);o.stop(now+i*.09+dur+.01)})}catch{}}
   if(page==='choose')chooseScreen();else render();
 })();
