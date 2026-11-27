@@ -78,11 +78,24 @@
     page='drill';
     render();
   }
-  function loadDrillRound(){const c=drillRoster[drill.round];drill.client=c;drill.context=c.starts[Math.floor(Math.random()*c.starts.length)];const step=drill.context.steps.find(s=>s[0]===drill.criterionId);drill.options=TrainingEngine.mix(step?.[2]||[]);drill.answer=null}
+  function loadDrillRound(){
+    const client=drillRoster[drill.round];
+    let call=TrainingEngine.start(client,'practice');
+    let stage=TrainingEngine.options(call);
+    while(stage.criterion!==drill.criterionId){
+      call=TrainingEngine.choose(call,stage.answers.find(answer=>answer.events.includes(stage.criterion)));
+      stage=TrainingEngine.options(call);
+    }
+    drill.client=client;
+    drill.context=call.context;
+    drill.prompt=call.lastClientReply || call.context.prompt;
+    drill.options=stage.answers;
+    drill.answer=null;
+  }
   function drillScreen(){
     if(drill.round>=3){shell(`<main class="panel drill-result"><div class="eyebrow">MICRO-DRILL · ЗАВЕРШЕНО</div><h1>Раунд за раундом.<br><em>Навык закреплён.</em></h1><p>Вы отработали ${drill.criterionId} на трёх архетипах. Результаты не добавлены в статистику смен.</p><button class="primary" id="toProfile">Вернуться в профиль</button></main>`);root.querySelector('#toProfile').onclick=()=>{page='profile';render()};return}
     const c=drill.client,criterion=D.checklist.find(x=>x.id===drill.criterionId),picked=drill.answer;
-    shell(`<main class="drill-view" style="--portrait:url('assets/${c.image}')"><div class="eyebrow">ОТРАБОТКА СЛАБОГО МЕСТА · РАУНД ${drill.round+1} ИЗ 3</div>${picked?`<h1>${esc(criterion.title)}</h1>`:''}<section class="dialog drill-dialog"><div class="avatar"></div><div><div class="eyebrow">${esc(c.name.toUpperCase())}</div><p class="customer">${esc(picked?picked.reply:drill.context.prompt)}</p><p class="context">${picked?`Ответ клиента на: «${esc(personalize(picked.text))}»`:''}</p></div></section>${picked?`<section class="drill-feedback ${picked.events.includes(drill.criterionId)?'correct':'incorrect'}"><b>${picked.events.includes(drill.criterionId)?'СТАНДАРТ СОБЛЮДЁН':'РАЗБЕРЁМ ОШИБКУ'}</b>${picked.events.includes(drill.criterionId)?'':`<p><strong>Почему это ошибка:</strong> ${esc(criterion.rule)}</p><p><strong>Эталон:</strong> <q>${esc(criterion.quote)}</q></p>`}<button class="primary" id="nextDrill">${drill.round===2?'Завершить отработку':'Дальше'}</button></section>`:`<section class="choices">${drill.options.map((a,index)=>`<button class="answer"><span class="answer-key" aria-hidden="true">${index+1}</span><span class="answer-text">${esc(personalize(a.text))}</span></button>`).join('')}</section>`}</main>`);
+    shell(`<main class="drill-view" style="--portrait:url('assets/${c.image}')"><div class="eyebrow">ОТРАБОТКА СЛАБОГО МЕСТА · РАУНД ${drill.round+1} ИЗ 3</div>${picked?`<h1>${esc(criterion.title)}</h1>`:''}<section class="dialog drill-dialog"><div class="avatar"></div><div><div class="eyebrow">${esc(c.name.toUpperCase())}</div><p class="customer">${esc(picked?picked.reply:drill.prompt)}</p><p class="context">${picked?`Ответ клиента на: «${esc(personalize(picked.text))}»`:''}</p></div></section>${picked?`<section class="drill-feedback ${picked.events.includes(drill.criterionId)?'correct':'incorrect'}"><b>${picked.events.includes(drill.criterionId)?'СТАНДАРТ СОБЛЮДЁН':'РАЗБЕРЁМ ОШИБКУ'}</b>${picked.events.includes(drill.criterionId)?'':`<p><strong>Почему это ошибка:</strong> ${esc(criterion.rule)}</p><p><strong>Эталон:</strong> <q>${esc(criterion.quote)}</q></p>`}<button class="primary" id="nextDrill">${drill.round===2?'Завершить отработку':'Дальше'}</button></section>`:`<section class="choices">${drill.options.map((a,index)=>`<button class="answer"><span class="answer-key" aria-hidden="true">${index+1}</span><span class="answer-text">${esc(personalize(a.text))}</span></button>`).join('')}</section>`}</main>`);
     if(picked)root.querySelector('#nextDrill').onclick=()=>{drill.round++;if(drill.round<3)loadDrillRound();page='drill';render()};else root.querySelectorAll('.choices .answer').forEach((b,index)=>b.onclick=()=>{drill.answer=drill.options[index];playSound(drill.answer.events.includes(drill.criterionId)?'correct':'error');render()});
   }
   function playSound(kind){if(!soundOn)return;try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;audio=audio||new C();if(audio.state==='suspended')audio.resume();const now=audio.currentTime;const tones=kind==='success'?[[523,.24],[659,.3],[784,.36]]:kind==='hangup'?[[440,.13],[330,.18],[220,.24]]:kind==='correct'?[[740,.07],[980,.08]]:kind==='click'?[[880,.045]]:[[175,.13]];tones.forEach(([hz,dur],i)=>{const o=audio.createOscillator(),g=audio.createGain();o.type=kind==='error'?'triangle':'sine';o.frequency.setValueAtTime(hz,now+i*.09);g.gain.setValueAtTime(.0001,now+i*.09);g.gain.exponentialRampToValueAtTime(.12,now+i*.09+.012);g.gain.exponentialRampToValueAtTime(.0001,now+i*.09+dur);o.connect(g);g.connect(audio.destination);o.start(now+i*.09);o.stop(now+i*.09+dur+.01)})}catch{}}

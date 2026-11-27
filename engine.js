@@ -16,6 +16,13 @@ window.TrainingEngine = (() => {
       : (clues.has('C4')?'motive':'blind');
     const companyDisclosed=/(^|[^а-яё])(?:супруг(?:а|у|ом|е|ой)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(session.lastClientReply||'');
     let prompt=stepPrompt,answers=stepAnswers;
+    if(criterion==='C2' && !/(?:сколько(?: у вас)? стоит|стоимость|по цене|цена|цену|почём)/iu.test(session.lastClientReply)){
+      answers=stepAnswers.map((answer,index)=>{
+        const [text,reply]=window.TRAINING_DATA.neutralC2[index];
+        const {earlyLeakKind,...base}=answer;
+        return {...base,text,reply};
+      });
+    }
     if(criterion==='C4'){
       const context=window.TRAINING_DATA.c4Context?.[session.clientId];
       const variant=clues.has('C3')?context?.afterExperience:context?.closed;
@@ -56,7 +63,10 @@ window.TrainingEngine = (() => {
         const target=standardIndex<0?0:standardIndex;
         answers=answers.map((answer,index)=>index===target?{
           ...answer,
-          text:companyLead+answer.text.charAt(0).toLocaleLowerCase('ru')+answer.text.slice(1),
+          text:answer.text.replace(/^((?:Алексей|Максим|Елена|Илья), )?([а-яё])/iu,
+            (_,address,first)=>(address || '')+(address && session.nameKnown
+              ? companyLead.charAt(0).toLocaleLowerCase('ru')+companyLead.slice(1)
+              : companyLead)+first.toLocaleLowerCase('ru')),
           companionContext:true
         }:answer);
       }
@@ -114,10 +124,10 @@ window.TrainingEngine = (() => {
         const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
         answers=answers.map(answer=>({...answer,text:answer.text.replace(`${guestName}, `,'')}));
       }
-      if(recovery){
+      if(!reopensExperience){
         answers=answers.map(answer=>({
           ...answer,
-          text:joinRecovery(recovery,answer.text),
+          text:recovery && !['C2','C3'].includes(criterion) && (answer.events.includes(criterion)||!['C4','C5','C6'].includes(criterion)) ? joinRecovery(recovery,answer.text) : answer.text,
           recoveryFrom:session.lastFailedCriterion,
           recoveryOutcome:session.lastOutcome
         }));
