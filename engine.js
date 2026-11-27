@@ -53,8 +53,12 @@ window.TrainingEngine = (() => {
       const companyLead=window.TRAINING_DATA.c6CompanionLead?.[session.clientId];
       if(companyLead){
         const standardIndex=answers.findIndex(answer=>answer.events?.includes('C6'));
-        if(standardIndex>=0)answers=answers.map((answer,index)=>index===standardIndex?{...answer,text:`${companyLead}${answer.text}`,companionContext:true}:answer);
-        else answers=answers.map((answer,index)=>index===0?{...answer,text:`${companyLead}${answer.text}`,companionContext:true}:answer);
+        const target=standardIndex<0?0:standardIndex;
+        answers=answers.map((answer,index)=>index===target?{
+          ...answer,
+          text:companyLead+answer.text.charAt(0).toLocaleLowerCase('ru')+answer.text.slice(1),
+          companionContext:true
+        }:answer);
       }
     }
     if(!session.nameKnown){
