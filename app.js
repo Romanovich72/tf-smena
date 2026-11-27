@@ -3,13 +3,15 @@
   const root=document.querySelector('#app'),D=window.TRAINING_DATA;
   const callMax=2*D.checklist.length;
   let shiftRoster=[],drillRoster=[];
+  let activeShift=null,fallbackShiftSequence=0;
+  let currentRecord=null,unsavedCalls=0;
   let page='home',mode='shift',client=null,session=null,filter='all',shiftCalls=[];
   const storage={get:key=>{try{return localStorage.getItem(key)}catch{return null}},set:(key,value)=>{try{localStorage.setItem(key,value)}catch{}},remove:key=>{try{localStorage.removeItem(key)}catch{}}};
   let pressure=storage.get('tf-noir-pressure-v1')==='true',soundOn=storage.get('tf-noir-sound-v1')!=='false';
   let timerId=null,rushLine='',trustFX='',cachedOptions=null,cachedKey='',identity=TrainingReport.identity(),drill=null,audio=null;
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const plainStopPhrase=s=>String(s??'').trim().replace(/^[«“"]+/, '').replace(/[»”"]+$/, '');
-  const personalize=s=>String(s??'').replaceAll('Анастасия',()=>identity.name||'Анастасия').replaceAll('Южное Бутово',()=>identity.club||'Южное Бутово');
+  const personalize=(s,details=identity)=>String(s??'').replaceAll('Анастасия',()=>details.name||'Анастасия').replaceAll('Южное Бутово',()=>details.club||'Южное Бутово');
   function shell(content){
     root.innerHTML=`<header class="top"><a class="brand" href="#" data-go="home">ТФ <span> / НОЧНАЯ СМЕНА</span></a><nav><button data-go="home">Тренажёр</button><button data-go="profile">Профиль</button><button id="soundToggle" class="sound-toggle" aria-pressed="${soundOn}">${soundOn?'♫ Звук: вкл':'♫ Звук: выкл'}</button></nav></header>${content}<footer>РЕЗУЛЬТАТИВНЫЙ ВХОДЯЩИЙ ЗВОНОК 2.0 <span>·</span> СТАНДАРТ ТФ <span>·</span> РАЗРАБОТКА: ПАВЕЛ АРИНИН</footer>`;
     document.onkeydown=e=>{if(!/^[1-4]$/.test(e.key)||e.altKey||e.ctrlKey||e.metaKey)return;const target=e.target,tag=target?.tagName?.toLowerCase();if(['input','textarea','select'].includes(tag)||target?.isContentEditable)return;const button=root.querySelectorAll('.choices .answer')[Number(e.key)-1];if(button){e.preventDefault();button.click()}};
@@ -28,12 +30,25 @@
   function begin(i){
     if(i===0){
       shiftCalls=[];
+      unsavedCalls=0;
       shiftRoster=TrainingEngine.mix(D.clients);
+      const id=globalThis.crypto?.randomUUID?.() ?? `shift-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${++fallbackShiftSequence}`;
+      activeShift={id,identity:{...identity}};
     }
     if(i>=shiftRoster.length){page='result';render();return}
     beginClient(shiftRoster[i],i);
   }
-  function beginClient(c,index=0,contextIndex=null){stopTimer();client=c;session=TrainingEngine.start(c,mode,contextIndex);session.shiftIndex=index;session.contextIndex=c.starts.indexOf(session.context);cachedOptions=null;cachedKey='';rushLine='';trustFX='';page='call';render()}
+  function beginClient(c,index=0,contextIndex=null){
+    stopTimer();
+    currentRecord=null;
+    if(mode!=='shift')unsavedCalls=0;
+    client=c;
+    session=TrainingEngine.start(c,mode,contextIndex);
+    session.identity=mode==='shift'?activeShift.identity:{...identity};
+    session.shiftIndex=index;
+    session.contextIndex=c.starts.indexOf(session.context);
+    cachedOptions=null;cachedKey='';rushLine='';trustFX='';page='call';render();
+  }
   function call(){
     const key=`${client.id}:${session.step}`;if(!cachedOptions||cachedKey!==key){cachedOptions=TrainingEngine.options(session);cachedKey=key}const opt=cachedOptions;if(!opt){finish();return}
     const currentCall=session;
@@ -43,7 +58,7 @@
       if (!session.revealedClueIds.includes(['C3','C4','C5'][index])) return [];
       return [`<div class="clue"><span>${label}</span><p>${esc(client.dossier[index])}</p></div>`];
     });
-    shell(`<main class="call" style="--portrait:url('assets/${esc(client.image)}')"><div class="calltop"><span class="eyebrow">${mode==='shift'?`РАБОЧАЯ СМЕНА · ЗВОНОК ${at+1} ИЗ ${shiftRoster.length}`:'ТРЕНИРОВКА · СВОБОДНЫЙ РЕЖИМ'}</span></div><div class="trust ${fx}"><span>ДОВЕРИЕ КЛИЕНТА</span><div><i style="width:${session.trust}%"></i></div><b>${session.trust}</b></div><section class="dialog"><div class="avatar"></div><div><div class="eyebrow">${esc(client.name.toUpperCase())}</div><p class="customer">${esc(line)}</p></div></section><aside class="dossier"><div class="dossier-head">ЗАМЕТКИ ПО ЗВОНКУ</div>${notes.length ? notes.join('') : '<p>Фиксируйте важные детали по ходу разговора — они появятся здесь</p>'}</aside>${pressure?`<div class="clockline"><span>⏱ <b id="timer">33</b> сек.</span><span>На ответ</span></div>`:''}${rushLine?`<div class="rush">${esc(rushLine)}</div>`:''}<section class="choices">${opt.answers.map((a,index)=>`<button class="answer"><span class="answer-key" aria-hidden="true">${index+1}</span><span class="answer-text">${esc(personalize(a.text))}</span></button>`).join('')}</section><div class="callbottom">ВХОДЯЩИЙ ЗВОНОК · ВЫБОР ОТВЕТА ВЛИЯЕТ НА ДОВЕРИЕ</div></main>`);
+    shell(`<main class="call" style="--portrait:url('assets/${esc(client.image)}')"><div class="calltop"><span class="eyebrow">${mode==='shift'?`РАБОЧАЯ СМЕНА · ЗВОНОК ${at+1} ИЗ ${shiftRoster.length}`:'ТРЕНИРОВКА · СВОБОДНЫЙ РЕЖИМ'}</span></div><div class="trust ${fx}"><span>ДОВЕРИЕ КЛИЕНТА</span><div><i style="width:${session.trust}%"></i></div><b>${session.trust}</b></div><section class="dialog"><div class="avatar"></div><div><div class="eyebrow">${esc(client.name.toUpperCase())}</div><p class="customer">${esc(line)}</p></div></section><aside class="dossier"><div class="dossier-head">ЗАМЕТКИ ПО ЗВОНКУ</div>${notes.length ? notes.join('') : '<p>Фиксируйте важные детали по ходу разговора — они появятся здесь</p>'}</aside>${pressure?`<div class="clockline"><span>⏱ <b id="timer">33</b> сек.</span><span>На ответ</span></div>`:''}${rushLine?`<div class="rush">${esc(rushLine)}</div>`:''}<section class="choices">${opt.answers.map((a,index)=>`<button class="answer"><span class="answer-key" aria-hidden="true">${index+1}</span><span class="answer-text">${esc(personalize(a.text,session.identity))}</span></button>`).join('')}</section><div class="callbottom">ВХОДЯЩИЙ ЗВОНОК · ВЫБОР ОТВЕТА ВЛИЯЕТ НА ДОВЕРИЕ</div></main>`);
     root.querySelectorAll('.choices .answer').forEach((button,index)=>button.onclick=()=>{
       if(page!=='call'||session!==currentCall||session.done)return;
       const answer=opt.answers[index];
@@ -88,8 +103,15 @@
     const res=TrainingEngine.result(session);
     playSound(res.outcome==='hangup'?'hangup':res.outcome==='iron'?'success':'click');
     const record={type:mode,clientId:client.id,clientName:client.name,date:new Date().toISOString(),result:res,outcome:res.outcome,trust:session.trust,earlyPriceLeak:session.earlyPriceLeak,answers:session.answers,contextIndex:session.contextIndex,contextPrompt:session.context.prompt};
+    record.identity=session.identity;
+    if(mode==='shift'){
+      record.shiftId=activeShift.id;
+      record.shiftCallIndex=session.shiftIndex+1;
+      record.shiftSize=shiftRoster.length;
+    }
     if(session.timeouts?.length)record.timeouts=session.timeouts;
-    TrainingReport.save(record);
+    currentRecord=record;
+    if(!TrainingReport.save(record))unsavedCalls++;
     if(mode==='shift'){
       shiftCalls.push(record);
       if(session.shiftIndex<shiftRoster.length-1){begin(session.shiftIndex+1);return}
@@ -98,27 +120,86 @@
     render();
   }
   function outcomeLabel(o){return ({iron:'Железная запись',cold:'Визит согласован',think:'Ушёл думать / в мессенджер',hangup:'Слив · клиент бросил трубку'})[o]||'Звонок завершён'}
-  function review(record,isFullShift=false){const missed=D.checklist.filter(c=>record.result.scores[c.id]===0);const timing=TrainingReport.timeoutSummary(record);const note=timing?`<p class="note">${isFullShift?`<b>${esc(record.clientName)}</b> · `:''}${esc(timing)}</p>`:'';if(!missed.length)return note;return note+`<details class="miss-review"><summary>${isFullShift?`${esc(record.clientName)} · `:''}${missed.length} критериев без баллов — раскрыть разбор</summary>${missed.map(c=>{const picked=(record.answers||[]).find(a=>a.criterion===c.id||a.id?.includes(`-${c.id}-`));const quote=String(c.quote||'').trim().replace(/^[«“”"]/, '').replace(/[»“”"]+[.!?…]*$/, '');return `<article class="review-card"><h3>${c.id} · ${esc(c.title)} <small>0/2</small></h3><p><b>Что ты выбрал:</b> ${picked?esc(personalize(picked.text)):'Этап не достигнут — звонок завершился до этого шага.'}</p>${picked?.earlyLeakTriggered?`<div class="stopword-feedback"><b>РАННЯЯ УТЕЧКА · ДОВЕРИЕ −8</b><p>Менеджер назвал годовую сумму или перешёл к стоимости и презентации до раскрытия двух улик. Клиент сильнее сопротивляется стоимости и хуже соглашается на визит.</p></div>`:''}${picked?.stopword?`<div class="stopword-feedback"><b>СТОП-ФРАЗА</b> · «${esc(picked.stopword.phrase)}»<p>Замена по стандарту: <q>${esc(picked.stopword.quote)}</q></p></div>`:''}<p><b>Почему это ошибка:</b> ${esc(c.rule)}</p><p><b>Эталон из методички:</b> <span class="review-quote">«${esc(quote)}»</span></p></article>`}).join('')}</details>`}
+  function review(record,isFullShift=false){const missed=D.checklist.filter(c=>record.result.scores[c.id]===0);const timing=TrainingReport.timeoutSummary(record);const note=timing?`<p class="note">${isFullShift?`<b>${esc(record.clientName)}</b> · `:''}${esc(timing)}</p>`:'';if(!missed.length)return note;return note+`<details class="miss-review"><summary>${isFullShift?`${esc(record.clientName)} · `:''}${missed.length} критериев без баллов — раскрыть разбор</summary>${missed.map(c=>{const pickedIdentity=record.identity||{},picked=(record.answers||[]).find(a=>a.criterion===c.id||a.id?.includes(`-${c.id}-`));const quote=String(c.quote||'').trim().replace(/^[«“”"]/, '').replace(/[»“”"]+[.!?…]*$/, '');return `<article class="review-card"><h3>${c.id} · ${esc(c.title)} <small>0/2</small></h3><p><b>Что ты выбрал:</b> ${picked?esc(personalize(picked.text,pickedIdentity)):'Этап не достигнут — звонок завершился до этого шага.'}</p>${picked?.earlyLeakTriggered?`<div class="stopword-feedback"><b>РАННЯЯ УТЕЧКА · ДОВЕРИЕ −8</b><p>Менеджер назвал годовую сумму или перешёл к стоимости и презентации до раскрытия двух улик. Клиент сильнее сопротивляется стоимости и хуже соглашается на визит.</p></div>`:''}${picked?.stopword?`<div class="stopword-feedback"><b>СТОП-ФРАЗА</b> · «${esc(picked.stopword.phrase)}»<p>Замена по стандарту: <q>${esc(picked.stopword.quote)}</q></p></div>`:''}<p><b>Почему это ошибка:</b> ${esc(c.rule)}</p><p><b>Эталон из методички:</b> <span class="review-quote">«${esc(quote)}»</span></p></article>`}).join('')}</details>`}
   function replay(record){
     mode='practice';
     const replayClient=D.clients.find(c=>c.id===record.clientId)||client;
     beginClient(replayClient,0,record.contextIndex);
   }
+  async function copyReport(text,button){
+    if(button.disabled)return;
+    button.disabled=true;
+    button.textContent='Скопировать отчёт для РОПа';
+    let copied=false;
+    try{
+      if(typeof navigator.clipboard?.writeText==='function'){
+        await navigator.clipboard.writeText(text);
+        copied=true;
+      }
+    }catch{}
+    if(button!==root.querySelector('#copy'))return;
+    if(!copied&&typeof document.execCommand==='function'){
+      let field;
+      try{
+        field=document.createElement('textarea');
+        field.value=text;
+        field.readOnly=true;
+        field.style.cssText='position:fixed;left:-9999px';
+        document.body.append(field);
+        field.select();
+        copied=document.execCommand('copy')===true;
+      }catch{}finally{field?.remove()}
+    }
+    button.disabled=false;
+    button.textContent=copied?'Отчёт скопирован ✓':'Скопировать отчёт для РОПа';
+    const manual=root.querySelector('#manualReport');
+    manual.hidden=copied;
+    manual.innerHTML=copied?'':'<p class="note" id="manualCopyHint">Автоматическое копирование недоступно. Выделите текст отчёта и скопируйте его вручную.</p><textarea id="reportText" rows="8" readonly aria-label="Текст отчёта" aria-describedby="manualCopyHint" style="width:100%;box-sizing:border-box"></textarea>';
+    if(!copied){
+      const field=root.querySelector('#reportText');
+      field.value=text;
+      field.focus();
+      field.select();
+    }
+  }
   function result(){
-    const last=TrainingEngine.result(session),isFullShift=mode==='shift'&&shiftCalls.length===shiftRoster.length;
+    const record=currentRecord,last=record.result,isFullShift=record.type==='shift'&&shiftCalls.length===shiftRoster.length;
     const res=isFullShift?{total:shiftCalls.reduce((n,c)=>n+c.result.total,0),scores:Object.fromEntries(D.checklist.map(c=>[c.id,Math.round(shiftCalls.reduce((n,x)=>n+x.result.scores[c.id],0)/shiftRoster.length)])),earlyPriceLeak:shiftCalls.some(c=>c.earlyPriceLeak),passed:shiftCalls.every(c=>c.result.passed),outcome:shiftCalls.every(c=>c.result.passed)?'iron':shiftCalls.some(c=>c.outcome==='hangup')?'hangup':'think'}:last;
-    const record=isFullShift?null:TrainingReport.read().at(-1),max=isFullShift?callMax*shiftRoster.length:callMax;
-    const detail=isFullShift?`<div class="criteria">${shiftCalls.map(c=>`<div class="criterion ${c.result.passed?'ok':'miss'}"><b>${esc(c.clientName)}</b><span>${outcomeLabel(c.outcome)}</span><strong>${c.result.total}/${callMax}</strong></div>`).join('')}</div>${shiftCalls.map(c=>review(c,true)).join('')}`:`<div class="criteria">${D.checklist.map(c=>`<div class="criterion ${res.scores[c.id]===2?'ok':'miss'}"><b>${c.id}</b><span>${esc(c.title)}</span><strong>${res.scores[c.id]}/2</strong></div>`).join('')}</div>${review(record||{result:res,answers:session.answers,timeouts:session.timeouts})}`;
-    const replayRecord=isFullShift?shiftCalls.at(-1):record;
-    shell(`<main class="result ${isFullShift?'noir-card':''}" style="--hero:url('assets/${D.manager}')"><div class="eyebrow">${isFullShift?'НУАР-КАРТОЧКА СМЕНЫ':mode==='shift'?'РАЗБОР СМЕНЫ':'РАЗБОР ТРЕНИРОВКИ'}</div><h1>${res.total}<small> / ${max}</small></h1><div class="outcome ${res.passed?'good':'bad'}">${isFullShift?'Результат рабочей смены':outcomeLabel(res.outcome)} · ${res.passed?'УСПЕШНО':'НЕ ЗАСЧИТАНО'}</div><p>${res.earlyPriceLeak?'Нарушение правил подачи цены или презентации снизила доверие и помешала засчитать запись.' : isFullShift?`Каждый звонок оценён отдельно по порогу 16/${callMax} и обязательным этапам.`:res.passed?'Обязательные этапы закрыты, звонок соответствует порогу.':`Для успешной записи нужно 16/${callMax} и по 2 балла в C4, C9 и C10.`}</p>${detail}<div class="actions"><button class="primary" id="copy">Скопировать отчёт для РОПа</button><button class="secondary" id="replay">Переиграть этот звонок</button><button class="secondary" id="again">${mode==='shift'?'Новая смена':'Ещё тренировка'}</button><button class="secondary" id="profile">Профиль прогресса</button></div></main>`);
-    root.querySelector('#copy').onclick=async()=>{const misses=r=>D.checklist.filter(c=>r.result.scores[c.id]===0).map(c=>c.id),mandatoryMisses=r=>['C4','C9','C10'].filter(id=>r.result.scores[id]!==2);const status=r=>`${misses(r).length?`провалы (0/2): ${misses(r).join(', ')}`:'без провалов'} · ${mandatoryMisses(r).length?`обязательные этапы не закрыты: ${mandatoryMisses(r).join(', ')}`:'обязательные этапы C4, C9, C10 закрыты'} · ранняя утечка цены: ${r.earlyPriceLeak?'да':'нет'}`;const singleRecord=record||{type:mode,result:res,outcome:res.outcome,trust:session.trust,earlyPriceLeak:session.earlyPriceLeak,timeouts:session.timeouts,clientName:client.name,date:new Date().toISOString()};const attribution='Симулятор «Ночная смена» · Автор: Павел Аринин';const text=(isFullShift?`ТФ — ОТЧЁТ ПО СМЕНЕ\nМенеджер: ${identity.name||'не указан'} · Клуб: ${identity.club||'не указан'}\n${shiftCalls.map(c=>`${c.clientName}: ${c.result.total}/${callMax} · ${outcomeLabel(c.outcome)} · ${c.result.passed?'зачтено':'не зачтено'} · ${status(c)}${c.timeouts?.length?` · ${TrainingReport.timeoutSummary(c)}`:''}`).join('\n')}\nИтого ${res.total}/${max} · ${res.passed?'смена зачтена':'смена не зачтена'}`:`${TrainingReport.text(singleRecord)}\n${status(singleRecord)}`)+`\n${attribution}`;try{await navigator.clipboard.writeText(text);root.querySelector('#copy').textContent='Отчёт скопирован ✓'}catch{const t=document.createElement('textarea');t.value=text;document.body.append(t);t.select();document.execCommand('copy');t.remove();root.querySelector('#copy').textContent='Отчёт скопирован ✓'}};
-    root.querySelector('#replay').onclick=()=>replay(replayRecord||{clientId:client.id,contextIndex:session.contextIndex});
+    const max=isFullShift?callMax*shiftRoster.length:callMax;
+    const detail=isFullShift?`<div class="criteria">${shiftCalls.map(c=>`<div class="criterion ${c.result.passed?'ok':'miss'}"><b>${esc(c.clientName)}</b><span>${outcomeLabel(c.outcome)}</span><strong>${c.result.total}/${callMax}</strong></div>`).join('')}</div>${shiftCalls.map(c=>review(c,true)).join('')}`:`<div class="criteria">${D.checklist.map(c=>`<div class="criterion ${res.scores[c.id]===2?'ok':'miss'}"><b>${c.id}</b><span>${esc(c.title)}</span><strong>${res.scores[c.id]}/2</strong></div>`).join('')}</div>${review(record)}`;
+    const reportIdentity=shiftCalls[0]?.identity||{};
+    const saveWarning=unsavedCalls===0?'':isFullShift
+      ? `Результат смены сформирован. Не удалось сохранить в историю ${unsavedCalls} из ${shiftCalls.length} звонков. Скопируйте отчёт для руководителя.`
+      : 'Результат не удалось сохранить в историю браузера. Вы можете скопировать отчёт и передать его руководителю.';
+    shell(`<main class="result ${isFullShift?'noir-card':''}" style="--hero:url('assets/${D.manager}')"><div class="eyebrow">${isFullShift?'НУАР-КАРТОЧКА СМЕНЫ':mode==='shift'?'РАЗБОР СМЕНЫ':'РАЗБОР ТРЕНИРОВКИ'}</div><h1>${res.total}<small> / ${max}</small></h1><div class="outcome ${res.passed?'good':'bad'}">${isFullShift?'Результат рабочей смены':outcomeLabel(res.outcome)} · ${res.passed?'УСПЕШНО':'НЕ ЗАСЧИТАНО'}</div><p>${res.earlyPriceLeak?'Нарушение правил подачи цены или презентации снизила доверие и помешала засчитать запись.' : isFullShift?`Каждый звонок оценён отдельно по порогу 16/${callMax} и обязательным этапам.`:res.passed?'Обязательные этапы закрыты, звонок соответствует порогу.':`Для успешной записи нужно 16/${callMax} и по 2 балла в C4, C9 и C10.`}</p>${!isFullShift?`<p class="note">${esc(record.clientName)}</p>`:''}${saveWarning?`<p class="note" role="status">${esc(saveWarning)}</p>`:''}${detail}<div class="actions"><button class="primary" id="copy">Скопировать отчёт для РОПа</button><button class="secondary" id="replay">Переиграть этот звонок</button><button class="secondary" id="again">${mode==='shift'?'Новая смена':'Ещё тренировка'}</button><button class="secondary" id="profile">Профиль прогресса</button></div><div id="manualReport" hidden></div></main>`);
+    const copyButton=root.querySelector('#copy');
+    const status=r=>{
+      const misses=D.checklist.filter(c=>r.result.scores[c.id]===0).map(c=>c.id);
+      const mandatoryMisses=['C4','C9','C10'].filter(id=>r.result.scores[id]!==2);
+      return `${misses.length?`провалы (0/2): ${misses.join(', ')}`:'без провалов'} · ${mandatoryMisses.length?`обязательные этапы не закрыты: ${mandatoryMisses.join(', ')}`:'обязательные этапы C4, C9, C10 закрыты'} · ранняя утечка цены: ${r.earlyPriceLeak?'да':'нет'}`;
+    };
+    const attribution='Симулятор «Ночная смена» · Автор: Павел Аринин';
+    const report=isFullShift?[
+      'ТФ — ОТЧЁТ ПО СМЕНЕ',
+      `Менеджер: ${reportIdentity.name||'не указан'} · Клуб: ${reportIdentity.club||'не указан'}`,
+      ...shiftCalls.map(call=>{
+        const timing=TrainingReport.timeoutSummary(call);
+        return `${call.clientName}: ${call.result.total}/${callMax} · ${outcomeLabel(call.outcome)} · ${call.result.passed?'зачтено':'не зачтено'} · ${status(call)}${timing?` · ${timing}`:''}`;
+      }),
+      `Итого ${res.total}/${max} · ${res.passed?'смена зачтена':'смена не зачтена'}`
+    ]:[TrainingReport.text(record),status(record)];
+    if(unsavedCalls)report.push(isFullShift
+      ? `Не сохранено в истории браузера: ${unsavedCalls} из ${shiftCalls.length} звонков.`
+      : 'Результат не сохранён в истории браузера.');
+    const reportText=[...report,attribution].join('\n');
+    copyButton.onclick=()=>copyReport(reportText,copyButton);
+    root.querySelector('#replay').onclick=()=>replay(record);
     root.querySelector('#again').onclick=()=>{mode=mode==='shift'?'shift':'practice';if(mode==='shift')begin(0);else{page='choose';chooseScreen()}};root.querySelector('#profile').onclick=()=>{page='profile';render()};
   }
   function profile(){
-    const rows=TrainingReport.read(),stats=TrainingReport.profile(filter),shifts=rows.filter(r=>r.type==='shift'),practices=rows.filter(r=>r.type==='practice');
+    const rows=TrainingReport.read(),stats=TrainingReport.profile(filter),history=TrainingReport.summarizeHistory(rows);
     const sorted=stats.filter(s=>s.total>0).sort((a,b)=>a.rate-b.rate||a.id.localeCompare(b.id)),weak=sorted[0]?.id||D.checklist[0].id;
-    shell(`<main class="panel"><div class="eyebrow">ПРОФИЛЬ МЕНЕДЖЕРА</div><h1>Сильные стороны<br><em>и точки роста.</em></h1><div class="tabs"><button data-filter="all" class="${filter==='all'?'selected':''}">Всё время</button><button data-filter="shift" class="${filter==='shift'?'selected':''}">Смены</button><button data-filter="practice" class="${filter==='practice'?'selected':''}">Тренировки</button></div><div class="stats"><div><b>${shifts.length}</b><span>СМЕНЫ</span></div><div><b>${practices.length}</b><span>ТРЕНИРОВКИ</span></div><div><b>${rows.length}</b><span>ВСЕГО ПОПЫТОК</span></div></div><button class="primary drill-start" id="weakDrill" data-criterion="${weak}">✦ Прокачать слабое место · ${weak}</button><p class="note">Или выберите любой критерий для короткой отработки:</p><div class="profilelist">${stats.map(s=>`<div class="profile-row"><button class="criterion-link" data-drill="${s.id}">${s.id} · ${esc(s.title)}</button><div><i style="width:${s.rate}%"></i></div><b>${s.total?s.rate+'%':'—'}</b></div>`).join('')}</div><p class="note">Смены и тренировки учитываются раздельно. Отработки слабых мест не сохраняются в статистику.</p><button class="secondary" id="clear">Очистить историю</button></main>`);
+    shell(`<main class="panel"><div class="eyebrow">СТАТИСТИКА ТРЕНАЖЁРА</div><h1>Сильные стороны<br><em>и точки роста.</em></h1><div class="tabs"><button data-filter="all" class="${filter==='all'?'selected':''}">Всё время</button><button data-filter="shift" class="${filter==='shift'?'selected':''}">Смены</button><button data-filter="practice" class="${filter==='practice'?'selected':''}">Тренировки</button></div><div class="stats"><div><b>${history.completedShifts}</b><span>ЗАВЕРШЁННЫЕ СМЕНЫ</span></div><div><b>${history.practices}</b><span>ТРЕНИРОВКИ</span></div><div><b>${rows.length}</b><span>ВСЕГО ПОПЫТОК</span></div></div><button class="primary drill-start" id="weakDrill" data-criterion="${weak}">✦ Прокачать слабое место · ${weak}</button><p class="note">Или выберите любой критерий для короткой отработки:</p><div class="profilelist">${stats.map(s=>`<div class="profile-row"><button class="criterion-link" data-drill="${s.id}">${s.id} · ${esc(s.title)}</button><div><i style="width:${s.rate}%"></i></div><b>${s.total?s.rate+'%':'—'}</b></div>`).join('')}</div><p class="note">Статистика собрана по сохранённым попыткам в этом браузере. Звонки рабочих смен — ${history.shiftCalls}. Зачтённые смены — ${history.passedShifts}. Незавершённые смены — ${history.incompleteShifts}.${history.legacyShiftCalls?` Старые звонки без привязки к смене — ${history.legacyShiftCalls}. Они учитываются в статистике навыков.`: ''} Отработки слабых мест не сохраняются в статистику.</p><button class="secondary" id="clear">Очистить историю</button></main>`);
     root.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;render()});root.querySelectorAll('[data-drill]').forEach(b=>b.onclick=()=>startDrill(b.dataset.drill));root.querySelector('#weakDrill').onclick=()=>startDrill(weak);root.querySelector('#clear').onclick=()=>{if(confirm('Удалить всю сохранённую историю попыток?')){storage.remove('tf-noir-training-v1');render()}};
   }
   function startDrill(criterionId){
