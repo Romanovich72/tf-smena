@@ -1,6 +1,7 @@
 window.TrainingEngine = (() => {
   const mix = list => { const a=[...list]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
   const joinRecovery=(lead,line)=>`${lead}${/[.!?…]\s*$/u.test(lead)?String(line).replace(/^([а-яё])/u,letter=>letter.toLocaleUpperCase('ru')):line}`;
+  const guestNames = {analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'};
   const nameForms = {
     analyst: 'алексе(?:й|я|ю|ем|е)',
     driver: 'максим(?:а|у|ом|е)?',
@@ -10,6 +11,11 @@ window.TrainingEngine = (() => {
   function mentionsGuest(clientId, line) {
     const forms = nameForms[clientId];
     return Boolean(forms && new RegExp('(?<![\\p{L}\\p{N}_])' + forms + '(?![\\p{L}\\p{N}_])', 'iu').test(line || ''));
+  }
+  function addressesGuest(session, text) {
+    const name = guestNames[session.clientId];
+    if (!session.nameKnown || !name) return false;
+    return new RegExp('(?:^|[.!?…]\\s*|,\\s+)' + name + '(?=\\s*[,!?…]|\\.(?:\\s|$))', 'iu').test(text);
   }
   function start(client,mode='practice',startIndex=null){
     const context=client.starts[startIndex??Math.floor(Math.random()*client.starts.length)];
@@ -82,7 +88,7 @@ window.TrainingEngine = (() => {
       }
     }
     if(!session.nameKnown){
-      const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
+      const guestName=guestNames[session.clientId];
       if(guestName)answers=answers.map(answer=>({...answer,text:answer.text.replaceAll(`${guestName}, `,'')}));
     }
     if(['soft','hard'].includes(session.lastOutcome)&&session.lastFailedCriterion){
@@ -151,7 +157,7 @@ window.TrainingEngine = (() => {
     const earlyLeakTriggered = Boolean(window.TRAINING_DATA.quotesAnnualPrice(answer.text) || premature);
     const clueIds=clueIdsFor(session);
     answer.events.filter(id=>['C3','C4','C5'].includes(id)).forEach(id=>clueIds.add(id));
-    const trackedAnswer={...answer,earlyLeakTriggered};
+    const trackedAnswer={...answer,earlyLeakTriggered,addressedGuestByName:addressesGuest(session,answer.text)};
     if((session.earlyPriceLeak||earlyLeakTriggered)&&answer.pricePressureReply)trackedAnswer.reply=answer.pricePressureReply;
     const nameKnown=session.nameKnown || mentionsGuest(session.clientId,trackedAnswer.reply);
     const turnOutcome=answer.events.includes(criterion)?'standard':answer.rough?'hard':'soft';
@@ -163,7 +169,13 @@ window.TrainingEngine = (() => {
     if(next.step>=session.context.steps.length){next.done=true;const r=result(next);next.outcome=r.passed?'iron':next.answers.some(a=>a.events.includes('C9'))?'cold':'think';}
     return next;
   }
-  function score(s){const got=new Set(s.answers.flatMap(a=>a.events));return Object.fromEntries(window.TRAINING_DATA.checklist.map(c=>[c.id,got.has(c.id)?2:0]));}
+  function score(s){
+    const got = new Set(s.answers.flatMap(answer => answer.events));
+    const greetingCompleted = s.answers[0]?.events.includes('C1');
+    const namedTurns = s.answers.filter(answer => answer.addressedGuestByName).length;
+    if (!greetingCompleted || !s.nameKnown || namedTurns < 2) got.delete('C1');
+    return Object.fromEntries(window.TRAINING_DATA.checklist.map(c => [c.id, got.has(c.id) ? 2 : 0]));
+  }
   function result(s){const scores=score(s),total=Object.values(scores).reduce((a,b)=>a+b,0);return {scores,total,earlyPriceLeak:Boolean(s.earlyPriceLeak),passed:!s.earlyPriceLeak&&total>=16&&scores.C4===2&&scores.C9===2&&scores.C10===2,outcome:s.outcome};}
   return {start,options,choose,score,result,mix};
 })();
