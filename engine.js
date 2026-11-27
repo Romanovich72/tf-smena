@@ -1,9 +1,19 @@
 window.TrainingEngine = (() => {
   const mix = list => { const a=[...list]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
   const joinRecovery=(lead,line)=>`${lead}${/[.!?…]\s*$/u.test(lead)?String(line).replace(/^([а-яё])/u,letter=>letter.toLocaleUpperCase('ru')):line}`;
+  const nameForms = {
+    analyst: 'алексе(?:й|я|ю|ем|е)',
+    driver: 'максим(?:а|у|ом|е)?',
+    woman: 'елен(?:а|ы|е|у|ой|ою)',
+    novice: 'иль(?:я|и|е|ю|ёй|ей|ёю|ею)'
+  };
+  function mentionsGuest(clientId, line) {
+    const forms = nameForms[clientId];
+    return Boolean(forms && new RegExp('(?<![\\p{L}\\p{N}_])' + forms + '(?![\\p{L}\\p{N}_])', 'iu').test(line || ''));
+  }
   function start(client,mode='practice',startIndex=null){
     const context=client.starts[startIndex??Math.floor(Math.random()*client.starts.length)];
-    return {mode,clientId:client.id,clientName:client.name,image:client.image,context,trust:50,roughRun:0,revealedClues:0,revealedClueIds:[],earlyPriceLeak:false,step:0,answers:[],lastOutcome:null,lastFailedCriterion:null,failedCriteria:[],lastClientReply:'',nameKnown:false,done:false,outcome:null};
+    return {mode,clientId:client.id,clientName:client.name,image:client.image,context,trust:50,roughRun:0,revealedClues:0,revealedClueIds:[],earlyPriceLeak:false,step:0,answers:[],lastOutcome:null,lastFailedCriterion:null,failedCriteria:[],lastClientReply:'',nameKnown:mentionsGuest(client.id,context.prompt),done:false,outcome:null};
   }
   function clueIdsFor(session){return new Set([...(session.revealedClueIds||[]),...session.answers.flatMap(answer=>answer.events||[]).filter(id=>['C3','C4','C5'].includes(id))])}
   function options(session){
@@ -16,7 +26,7 @@ window.TrainingEngine = (() => {
       : (clues.has('C4')?'motive':'blind');
     const companyDisclosed=/(^|[^а-яё])(?:супруг(?:а|у|ом|е|ой)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(session.lastClientReply||'');
     let prompt=stepPrompt,answers=stepAnswers;
-    if(criterion==='C2' && !/(?:сколько(?: у вас)? стоит|стоимость|по цене|цена|цену|почём)/iu.test(session.lastClientReply)){
+    if(criterion==='C2' && !/(?:сколько(?: у вас)? стоит|стоимост[ьи]|по цене|цена|цену|почём)/iu.test(session.lastClientReply)){
       answers=stepAnswers.map((answer,index)=>{
         const [text,reply]=window.TRAINING_DATA.neutralC2[index];
         const {earlyLeakKind,...base}=answer;
@@ -120,10 +130,6 @@ window.TrainingEngine = (() => {
         else if (/(плав|спин|энерг|восстан|тонус|выносл|переключ|дорог|маршрут|график|комфорт|перегруз|поддерж|регулярн|форму|заниматься.*после)/i.test(reply))
           recovery=window.TRAINING_DATA.c4AcknowledgedNeedRecovery?.[session.clientId]||recovery;
       }
-      if(criterion==='C2'&&session.lastFailedCriterion==='C1'){
-        const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
-        answers=answers.map(answer=>({...answer,text:answer.text.replace(`${guestName}, `,'')}));
-      }
       if(!reopensExperience){
         answers=answers.map(answer=>({
           ...answer,
@@ -140,14 +146,14 @@ window.TrainingEngine = (() => {
     if(session.done)return session;
     const criterion=session.context.steps?.[session.step]?.[0];
     const earlyStage=['C1','C2','C3','C4','C5','C6'].includes(criterion);
-    const earlyLeakTriggered=answer.earlyLeakKind==='price'||(Boolean(answer.earlyLeakKind)&&earlyStage&&(session.revealedClues||0)<2);
+    const quotesMoney = /\d\s*(?:₽|руб(?:лей|ля|ль|\.)?)(?![а-яё])/iu.test(answer.text);
+    const premature = earlyStage && clueIdsFor(session).size < 2 && (quotesMoney || answer.earlyLeakKind);
+    const earlyLeakTriggered = Boolean(window.TRAINING_DATA.quotesAnnualPrice(answer.text) || premature);
     const clueIds=clueIdsFor(session);
     answer.events.filter(id=>['C3','C4','C5'].includes(id)).forEach(id=>clueIds.add(id));
     const trackedAnswer={...answer,earlyLeakTriggered};
     if((session.earlyPriceLeak||earlyLeakTriggered)&&answer.pricePressureReply)trackedAnswer.reply=answer.pricePressureReply;
-    const guestName={analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'}[session.clientId];
-    const nameSpoken=guestName&&new RegExp(`(^|[^а-яё])${guestName}($|[^а-яё])`,'i').test(trackedAnswer.reply||'');
-    const nameKnown=Boolean(session.nameKnown||nameSpoken);
+    const nameKnown=session.nameKnown || mentionsGuest(session.clientId,trackedAnswer.reply);
     const turnOutcome=answer.events.includes(criterion)?'standard':answer.rough?'hard':'soft';
     const failedCriteria=turnOutcome==='standard'?(session.failedCriteria||[]):[...new Set([...(session.failedCriteria||[]),criterion])];
     const trustDelta=answer.delta-(earlyLeakTriggered?8:0);
