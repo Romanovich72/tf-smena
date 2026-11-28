@@ -22,7 +22,7 @@ function loadApp(pressure, storage = new Map([['tf-noir-pressure-v1', String(pre
     querySelector: node,
     querySelectorAll: selector => ({
       '[data-go]': [Object.assign(node('home'), {dataset:{go:'home'}}), Object.assign(node('profile'), {dataset:{go:'profile'}})],
-      '[data-client]': [Object.assign(node('analyst'), {dataset:{client:'analyst'}})],
+      '[data-client]': ['analyst','driver'].map(client=>Object.assign(node(client), {dataset:{client}})),
       '[data-filter]': ['all','shift','practice'].map(filter=>Object.assign(node('filter-'+filter), {dataset:{filter}})),
       '.choices .answer': [0,1,2,3].map(node)
     })[selector] || []
@@ -68,7 +68,7 @@ function loadApp(pressure, storage = new Map([['tf-noir-pressure-v1', String(pre
   env.TrainingEngine.options=session=>stage=options(session);
   if (faults.practiceOpening !== undefined) {
     const start=env.TrainingEngine.start;
-    env.TrainingEngine.start=(client,mode,index)=>start(client,mode,index??(client.id==='analyst'?faults.practiceOpening:null));
+    env.TrainingEngine.start=(client,mode,index)=>start(client,mode,index??(client.id===(faults.practiceClient??'analyst')?faults.practiceOpening:null));
   }
   const click=key=>node(key).onclick({preventDefault(){},currentTarget:node(key)});
   const choose=(kind='correct')=>{
@@ -86,7 +86,7 @@ function loadApp(pressure, storage = new Map([['tf-noir-pressure-v1', String(pre
     report:env.TrainingReport,
     setIdentity(name,club){node('#managerName').value=name;node('#managerClub').value=club;node('#managerName').oninput()},
     completeCall(){for(let i=0;i<10;i++)choose()},
-    practice(){click('#free');click('analyst')}};
+    practice(client='analyst'){click('#free');click(client)}};
 }
 
 test('Заметки в силовой ветке показывают только раскрытые факты и сохраняются при переигрывании',()=>{
@@ -143,6 +143,78 @@ test('Семейные заметки раскрываются по очеред
   assert.match(app.root.innerHTML,/>80<small> \/ 80/);
   await app.click('#copy');
   assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/);
+});
+
+test('Обеденная ветка показывает только известные заметки, переигрывается и входит в смену 80/80',async()=>{
+  const app=loadApp(false,undefined,{practiceClient:'driver',practiceOpening:2});
+  const notes=()=>app.root.innerHTML.match(/<aside class="dossier">(.*?)<\/aside>/u)[1];
+  app.setIdentity('Марина','Люблино');
+  app.practice('driver');
+  assert.match(app.root.innerHTML,/Территория Фитнеса Люблино, менеджер Марина/u);
+  app.choose(); app.choose();
+  assert.match(notes(),/Фиксируйте важные детали/u);
+  app.choose();
+  assert.match(notes(),/Раньше занимался силовыми/u);
+  assert.doesNotMatch(notes(),/Работает рядом|компьютером/u);
+  app.choose();
+  assert.match(notes(),/Около часа вместе с дорогой/u);
+  assert.doesNotMatch(notes(),/компьютером/u);
+  app.choose();
+  assert.match(notes(),/Планирует посещать клуб один.*после работы за компьютером/u);
+  for(let i=0;i<5;i++)app.choose();
+  const [record]=app.history();
+  assert.equal(record.contextIndex,2);
+  assert.equal(record.result.total,20);
+  assert.equal(record.answers.at(-1).visitAgreement,'confirmed');
+  app.click('#replay');
+  assert.match(app.root.innerHTML,/коротко, я сейчас на работе/u);
+  assert.match(notes(),/Фиксируйте важные детали/u);
+
+  app.click('home'); app.click('#shift');
+  for(let i=0;i<4;i++)app.completeCall();
+  const shift=app.history().slice(1);
+  assert.equal(new Set(shift.map(call=>call.clientId)).size,4);
+  assert.equal(shift.find(call=>call.clientId==='driver').contextIndex,2);
+  assert.match(app.root.innerHTML,/>80<small> \/ 80/);
+  await app.click('#copy');
+  assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/);
+});
+
+test('Вечерняя ветка Максима раскрывает заметки и сохраняет контекст в звонке и смене',async()=>{
+  const app=loadApp(false,undefined,{practiceClient:'driver',practiceOpening:3});
+  const notes=()=>app.root.innerHTML.match(/<aside class="dossier">(.*?)<\/aside>/u)[1];
+  app.setIdentity('Марина','Люблино');
+  app.practice('driver');
+  assert.match(app.root.innerHTML,/Территория Фитнеса Люблино, менеджер Марина/u);
+  app.choose(); app.choose();
+  assert.match(notes(),/Фиксируйте важные детали/u);
+  app.choose();
+  assert.match(notes(),/Раньше регулярно посещал бассейн/u);
+  assert.doesNotMatch(notes(),/плавать и отдыхать|19:00/u);
+  app.choose();
+  assert.match(notes(),/Хочет плавать и отдыхать/u);
+  assert.doesNotMatch(notes(),/19:00/u);
+  app.choose();
+  assert.match(notes(),/Планирует посещать клуб один.*после 19:00/u);
+  for(let i=0;i<5;i++)app.choose();
+  const [record]=app.history();
+  assert.equal(record.contextIndex,3);
+  assert.equal(record.result.total,20);
+  assert.match(record.answers.at(-1).reply,/^Да, завтра в 19:30/u);
+  assert.equal(record.answers.at(-1).visitAgreement,'confirmed');
+  app.click('#replay');
+  assert.match(app.root.innerHTML,/давайте коротко, времени немного/u);
+  assert.match(notes(),/Фиксируйте важные детали/u);
+
+  app.click('home'); app.click('#shift');
+  for(let i=0;i<4;i++)app.completeCall();
+  const shift=app.history().slice(1);
+  assert.equal(new Set(shift.map(call=>call.clientId)).size,4);
+  assert.equal(shift.find(call=>call.clientId==='driver').contextIndex,3);
+  assert.match(app.root.innerHTML,/>80<small> \/ 80/);
+  await app.click('#copy');
+  assert.match(app.clipboard(),/Менеджер: Марина · Клуб: Люблино/u);
+  assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/u);
 });
 
 test('Таймер — отдельные события, один интервал и одна запись после обрыва', async()=>{

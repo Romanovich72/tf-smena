@@ -508,7 +508,8 @@ test('all openings adapt all four next-step choices after every soft and hard an
               `${client.id}/${failedCriterion}: manager does not use a name the client has not given`);
           }
           if (!/(бассейн|плав|водн)/i.test(spoken))
-            assert.ok(next.answers.every(answer => !/(бассейн|взросл.{0,10}чаш|морск.{0,10}вод|плав(?!н))/i.test(answer.text)),
+            assert.ok(next.answers.every(answer => !/(бассейн|взросл.{0,10}чаш|морск.{0,10}вод|плав(?!н))/i.test(answer.text)
+              || (context.presentation?.fullC6 && nextCriterion==='C6' && answer.rough && /вместо силовых тренировок/iu.test(answer.text))),
               `${client.id}/${failedCriterion}: next choices do not invent a water/pool interest`);
           if (!/спин/i.test(spoken))
             assert.ok(next.answers.every(answer => !/спин/i.test(answer.text)),
@@ -795,7 +796,8 @@ test('Цена на C2 появляется только после вопрос
     for (const [opening] of c.starts.entries()) {
       let s = TrainingEngine.start(c, 'practice', opening);
       const price = /стоимост|сколько(?: у вас)? стоит|цен[ауеы]|89\s*100/iu;
-      assert.doesNotMatch(s.context.prompt, price);
+      if (c.id==='driver' && opening===2) assert.match(s.context.prompt,/сколько стоит карта/i);
+      else assert.doesNotMatch(s.context.prompt, price);
       const first = TrainingEngine.options(s);
       for (const option of first.answers) {
         assert.doesNotMatch(option.text, price);
@@ -948,10 +950,16 @@ test('C6 сохраняет четыре состояния раскрытия �
   for (const client of clients) {
     for (const [opening] of client.starts.entries()) {
       const presentation = client.starts[opening].presentation;
-      const family = presentation?.company;
-      const strength = presentation && !family;
+      const family = client.id==='analyst' && presentation?.company;
+      const evening = client.id==='driver' && presentation?.company;
+      const lunch = client.id==='driver' && presentation?.fullC6 && !evening;
+      const strength = client.id==='analyst' && presentation && !family;
       const facts = family
         ? [/из-за семейного графика.*оставили зал/i, /хотите вернуться без разъездов/i]
+        : evening
+        ? [/раньше регулярно плавали/i, /хотите отдыхать после работы/i]
+        : lunch
+        ? [/по вечерам не успевали/i, /вернуться к силовым в обед/i]
         : strength
         ? [/раньше.*ждать стойку/i, /вернуть силу и выносливость/i]
         : recap[client.id];
@@ -986,9 +994,9 @@ test('C6 сохраняет четыре состояния раскрытия �
           const standard = standards[0];
           const summary = standard.text.split('. ')[0];
           for (const fact of facts) assert.match(summary, fact);
-          assert.equal(standard.companionContext, true);
+          assert.equal(Boolean(standard.companionContext), !lunch && !evening);
           if (family) assert.match(standard.text, /сын.*школ[ае] плавания.*технику с тренером/iu);
-          else assert.ok(standard.text.endsWith(data.c6CompanionTail[client.id] + '?'));
+          else if (!lunch && !evening) assert.ok(standard.text.endsWith(data.c6CompanionTail[client.id] + '?'));
           const lengths = answers.map(a => a.text.length);
           assert.ok(Math.max(...lengths) / Math.min(...lengths) <= 1.5);
           if (standard.text.length === Math.max(...lengths)) longestStandards++;
@@ -1148,6 +1156,199 @@ test('Семейный Алексей выпадает случайно, а во
   const neutralC5=TrainingEngine.options(neutral).answers.find(a=>a.events.includes('C5'));
   assert.match(neutralC5.text,/для себя или кто-то из близких/u);
   assert.doesNotMatch(neutralC5.text,/ребёнка|Алексей/u);
+});
+
+test('Обеденная ветка Максима учитывает восемь сочетаний C3–C5 и расставляет ошибки C6 по смыслу', () => {
+  const driver=clients.find(client=>client.id==='driver');
+  assert.equal(clients.length,4);
+  assert.equal(clients.reduce((total,client)=>total+client.starts.length,0),12);
+  assert.equal(driver.starts.length,4);
+  const random=Math.random;
+  try {
+    for (let index=0;index<3;index++) {
+      Math.random=()=>(index+0.5)/driver.starts.length;
+      assert.equal(TrainingEngine.start(driver).context,driver.starts[index]);
+    }
+  } finally { Math.random=random; }
+
+  const start=TrainingEngine.start(driver,'practice',2);
+  for(const greeting of TrainingEngine.options(start).answers){
+    const next=TrainingEngine.choose(start,greeting);
+    assert.equal(next.nameKnown,Boolean(greeting.asksGuestName));
+    assert.match(next.lastClientReply,/сколько стоит карта\?/iu);
+    if(!next.nameKnown) assert.ok(TrainingEngine.options(next).answers.every(a=>!/Максим/u.test(a.text)));
+  }
+
+  const soleSchedule=/обед|13:00|рядом с работой|около часа/iu;
+  const previousExperience=/по вечерам|вечером из-за работы|знакомые (?:силовые )?упражнения|вернуться к силовым|вместо силовых|силовые и кардио/iu;
+  const otherContext=/за рулём|пробк|парковк|по пути домой|с коллегой|дублирующ|45 минут/iu;
+  for (let mask=0;mask<8;mask++) {
+    const missed=['C3','C4','C5'].filter((_,index)=>mask&(1<<index));
+    let call=start;
+    while(!call.done){
+      const {criterion,answers}=TrainingEngine.options(call);
+      const best=answers.find(a=>a.events.includes(criterion));
+      assert.equal(answers.length,4);
+      assert.ok(answers.every(a=>/\?$/u.test(a.text)&&a.reply.trim()));
+      if(mask===0){
+        const lengths=answers.map(a=>a.text.length);
+        assert.ok(Math.max(...lengths)/Math.min(...lengths)<=1.5,`Lengths for ${criterion}: ${lengths}`);
+      }
+      for(const a of answers){
+        const copy=a.text+' '+a.reply;
+        assert.doesNotMatch(copy,otherContext);
+        if(!call.revealedClueIds.includes('C5') && (criterion!=='C5'||a!==best)) assert.doesNotMatch(copy,/после компьютера|планируете посещать клуб один/iu);
+        if(['C6','C9','C7','C8','C10'].includes(criterion)){
+          if(!call.revealedClueIds.includes('C4')) assert.doesNotMatch(copy,soleSchedule);
+          if(!call.revealedClueIds.includes('C3')) assert.doesNotMatch(copy,previousExperience);
+        }
+      }
+      if(criterion==='C6'){
+        if(best) assert.match(best.text,/Life Fitness.*Hammer Strength.*Concept2/u);
+        else assert.ok(missed.includes('C3')&&missed.includes('C4'));
+        if(!missed.includes('C3')&&!missed.includes('C4')){
+          for(const [pattern,events,delta,rough] of [
+            [/добавить короткое кардио/u,['C6'],3,false],
+            [/вместо силовых тренировок/u,[],-18,true],
+            [/какие упражнения можно делать на этом оборудовании/u,[],0,false],
+            [/отправить фотографии оборудования/u,[],-2,false]
+          ]){
+            const option=answers.find(a=>pattern.test(a.text));
+            assert.ok(option);
+            assert.deepEqual([option.events,option.delta,option.rough],[events,delta,rough]);
+            const next=TrainingEngine.choose(call,option);
+            assert.equal(next.trust-call.trust,delta);
+            assert.equal(next.earlyPriceLeak,false);
+            if(!events.length){
+              const recovery=TrainingEngine.options(next);
+              assert.equal(recovery.criterion,'C9');
+              assert.ok(recovery.answers.every(a=>a.recoveryFrom==='C6'));
+            }
+          }
+        }
+      }
+      if(criterion==='C7'){
+        if(!missed.includes('C3')&&!missed.includes('C4')){
+          assert.equal(best.text,'Сможете совмещать силовые и кардио в одном клубе рядом с работой. При карте на 12 месяцев — в среднем от 4 000 ₽ в месяц. Удобнее оплатить год или платить помесячно?');
+        } else {
+          assert.match(best.text,/^На встрече.+При карте на 12 месяцев — в среднем от 4 000 ₽ в месяц.+год или платить помесячно\?$/u);
+        }
+        assert.match(best.reply,/^Помесячно.*Как это работает\?/u);
+      }
+      if(criterion==='C10'){
+        assert.ok(!call.answers.some(a=>a.visitAgreement));
+        if(missed.includes('C4')){
+          assert.match(best.text,/могу предложить завтра в 10:30.+у вас найдутся десять минут в это время\?$/u);
+          assert.match(best.reply,/^Да, завтра в 10:30 у меня есть свободные десять минут\./u);
+        } else {
+          assert.ok(best.text.endsWith('завтра в 13:00 удобно заглянуть?'));
+          assert.ok(best.reply.startsWith('Да, завтра в 13:00.'));
+        }
+        assert.equal(TrainingEngine.choose(call,best).answers.at(-1).visitAgreement,'confirmed');
+        assert.ok(answers.filter(a=>a!==best).every(a=>!a.visitAgreement));
+      }
+      const answer=missed.includes(criterion)?answers.find(a=>a.id.endsWith('-2')):
+        best??answers.find(a=>a.id.endsWith('-C6-list'));
+      call=TrainingEngine.choose(call,answer);
+    }
+    const result=TrainingEngine.result(call);
+    assert.equal(result.total,20-2*(missed.length+Number(missed.includes('C3')&&missed.includes('C4'))));
+    assert.equal(result.passed,!missed.includes('C4'));
+    assert.equal(result.outcome,result.passed?'iron':'cold');
+  }
+});
+
+test('Вечернее восстановление Максима учитывает нейтральное начало и восемь сочетаний C3–C5', () => {
+  const driver=clients.find(client=>client.id==='driver');
+  const start=TrainingEngine.start(driver,'practice',3);
+  const price=/стоимост|цена|сколько(?: у вас)? стоит|рублей|₽/iu;
+  for(const greeting of TrainingEngine.options(start).answers){
+    const next=TrainingEngine.choose(start,greeting);
+    assert.equal(next.nameKnown,Boolean(greeting.asksGuestName));
+    assert.ok(next.lastClientReply.endsWith('Какие у вас условия посещения?'));
+    const c2=TrainingEngine.options(next);
+    assert.ok(c2.answers.every(a=>!price.test(a.text+' '+a.reply)&&!a.earlyLeakKind));
+    if(!next.nameKnown) assert.ok(c2.answers.every(a=>!/Максим/u.test(a.text)));
+    const correct=c2.answers.find(a=>a.events.includes('C2'));
+    assert.equal(correct.reply,'Да, давайте.');
+    const accepted=TrainingEngine.choose(next,correct);
+    assert.equal(TrainingEngine.score(accepted).C2,2);
+    assert.equal(accepted.earlyPriceLeak,false);
+  }
+
+  const oldContext=/обед|час вместе с дорогой|рядом с работой|Concept2|Hammer Strength|за рулём|пробк|парковк/iu;
+  const past=/раньше регулярно плавали|работы прибавилось|вернуться к плаванию|снова поплавать|снова плавать/iu;
+  const motive=/термальн|после дня за компьютером|после заплыва|вечерн(ее|его) плавани/iu;
+  const schedule=/после семи|после 19:00|19:30|посещать клуб один/iu;
+  for(let mask=0;mask<8;mask++){
+    const missed=['C3','C4','C5'].filter((_,i)=>mask&(1<<i));
+    let call=start;
+    while(!call.done){
+      const {criterion,answers}=TrainingEngine.options(call);
+      const best=answers.find(a=>a.events.includes(criterion));
+      assert.equal(answers.length,4);
+      for(const answer of answers){
+        assert.match(answer.text,/\?$/u);
+        assert.ok(answer.reply.trim());
+        assert.doesNotMatch(answer.text+' '+answer.reply,oldContext);
+        if(['C6','C9','C7','C8','C10'].includes(criterion)){
+          if(!call.revealedClueIds.includes('C3')) assert.doesNotMatch(answer.text+' '+answer.reply,past);
+          if(!call.revealedClueIds.includes('C4')) assert.doesNotMatch(answer.text+' '+answer.reply,motive);
+          if(!call.revealedClueIds.includes('C5')) assert.doesNotMatch(answer.text+' '+answer.reply,schedule);
+        }
+      }
+      if(mask===0){
+        const lengths=answers.map(a=>a.text.length);
+        assert.ok(Math.max(...lengths)/Math.min(...lengths)<=1.5,`Lengths for ${criterion}: ${lengths}`);
+      }
+      if(criterion==='C6'){
+        assert.equal(Boolean(best),!missed.includes('C3')||!missed.includes('C4'));
+        if(best) assert.match(best.text,/бассейн/iu);
+        if(best&&call.revealedClueIds.includes('C4')) assert.match(best.text,/термальн/iu);
+        if(!missed.includes('C3')&&!missed.includes('C4')){
+          for(const [pattern,events,delta,rough] of [
+            [/спокойно погреться/u,['C6'],3,false],
+            [/вместо вечернего плавания/u,[],-18,true],
+            [/расположены зоны/u,[],0,false],
+            [/отправить фотографии бассейна/u,[],-2,false]
+          ]){
+            const option=answers.find(a=>pattern.test(a.text));
+            assert.ok(option);
+            assert.deepEqual([option.events,option.delta,option.rough],[events,delta,rough]);
+            const next=TrainingEngine.choose(call,option);
+            assert.equal(next.trust-call.trust,delta);
+            assert.equal(next.earlyPriceLeak,false);
+            if(!events.length){
+              const recovery=TrainingEngine.options(next);
+              assert.equal(recovery.criterion,'C9');
+              assert.ok(recovery.answers.every(a=>a.recoveryFrom==='C6'));
+            }
+          }
+        }
+      }
+      if(criterion==='C7'){
+        assert.match(best.text,/^.+При карте на 12 месяцев — в среднем от 4 000 ₽ в месяц.+за год или помесячно\?$/u);
+        assert.equal(best.reply,'Помесячно. Какие там условия?');
+      }
+      if(criterion==='C10'){
+        assert.ok(!call.answers.some(a=>a.visitAgreement));
+        const time=missed.includes('C5')?'18:30':'19:30';
+        assert.ok(best.text.endsWith(`завтра в ${time} удобно заглянуть?`));
+        assert.ok(best.reply.startsWith(`Да, завтра в ${time}.`));
+        assert.equal(TrainingEngine.choose(call,best).answers.at(-1).visitAgreement,'confirmed');
+        assert.ok(answers.filter(a=>a!==best).every(a=>!a.visitAgreement));
+      }
+      const option=missed.includes(criterion)?answers.find(a=>a.id.endsWith('-2')):
+        best??answers.find(a=>a.id.endsWith('-C6-list'));
+      if(criterion==='C9') assert.match(option.reply,/сколько стоит карта\?/u);
+      if(['C1','C2','C3','C4','C5','C6','C9'].includes(criterion)) assert.doesNotMatch(option.text,price);
+      call=TrainingEngine.choose(call,option);
+    }
+    const result=TrainingEngine.result(call);
+    assert.equal(result.total,20-2*(missed.length+Number(missed.includes('C3')&&missed.includes('C4'))));
+    assert.equal(result.passed,!missed.includes('C4'));
+    assert.equal(result.outcome,result.passed?'iron':'cold');
+  }
 });
 
 test('Фактическое согласие на визит и зачёт звонка определяются отдельно', () => {

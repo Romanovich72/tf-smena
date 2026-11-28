@@ -32,12 +32,13 @@ window.TrainingEngine = (() => {
       ? (clues.has('C4')?'both':'experience')
       : (clues.has('C4')?'motive':'blind');
     const company=clues.has('C5')?presentation?.company:undefined;
-    const fullPresentation=need==='both'?company:undefined;
+    const fullPresentation=need==='both'?(presentation?.fullC6??company):undefined;
     const companyDisclosed=/(^|[^а-яё])(?:супруг(?:а|у|ом|е|ой)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(session.lastClientReply||'');
     let prompt=stepPrompt,answers=stepAnswers;
     if(criterion==='C2' && !/(?:сколько(?: у вас)? стоит|стоимост[ьи]|по цене|цена|цену|почём)/iu.test(session.lastClientReply)){
+      const neutral=session.context.neutralC2??window.TRAINING_DATA.neutralC2;
       answers=stepAnswers.map((answer,index)=>{
-        const [text,reply]=window.TRAINING_DATA.neutralC2[index];
+        const [text,reply]=neutral[index];
         const {earlyLeakKind,...base}=answer;
         return {...base,text,reply};
       });
@@ -57,7 +58,7 @@ window.TrainingEngine = (() => {
       if(context){prompt=context.prompt;answers=stepAnswers.map((answer,index)=>index===0?{...answer,text:context.text}:answer)}
     }
     if(criterion==='C6'&&!clues.has('C3')&&!clues.has('C4')){
-      const blind=window.TRAINING_DATA.blindC6?.[session.clientId];
+      const blind=presentation?.blindC6??window.TRAINING_DATA.blindC6?.[session.clientId];
       if(blind){prompt=blind.prompt;answers=blind.answers}
     }
     if(criterion==='C6'&&(clues.has('C3')||clues.has('C4'))){
@@ -66,21 +67,22 @@ window.TrainingEngine = (() => {
       if(choices)answers=answers.map((answer,index)=>({...answer,text:choices[index]??answer.text,reply:reactions?.[index]??answer.reply}));
     }
     if(criterion==='C9'&&!clues.has('C3')&&!clues.has('C4')){
-      const closed=window.TRAINING_DATA.c9Closed?.[session.clientId];
+      const closed=presentation?.c9Closed??window.TRAINING_DATA.c9Closed?.[session.clientId];
       if(closed){prompt=closed.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:closed.choices[index]??answer.text}))}
     }
 
     const valueLine=(presentation?.value??window.TRAINING_DATA.valueDialogue[session.clientId])?.[need]?.[criterion];
     if(valueLine){
-      answers=answers.map(answer=>answer.events.includes(criterion)?{...answer,text:valueLine}:answer);
+      const {text,reply}=typeof valueLine==='string'?{text:valueLine}:valueLine;
+      answers=answers.map(answer=>answer.events.includes(criterion)?{...answer,text,reply:reply??answer.reply}:answer);
       if(need!=='both')prompt={
         C6:'Предложите подходящую особенность клуба с учётом слов гостя.',
         C9:'Предложите за 10 минут проверить то, что важно гостю.',
         C7:'Свяжите цену с тем, что рассказал гость, и предложите выбор оплаты.'
-      }[criterion];
+      }[criterion]??prompt;
     }
     const generalOffer=need==='blind'&&['C7','C9'].includes(criterion);
-    const companyTurn=criterion==='C6'?company?.c6[need]:generalOffer?undefined:company?.turns[criterion];
+    const companyTurn=criterion==='C6'?company?.c6?.[need]:generalOffer?undefined:company?.turns[criterion];
     if(companyTurn){
       answers=answers.map(answer=>answer.events.includes(criterion)?{
         ...answer,...companyTurn,...(criterion==='C6'?{companionContext:true}:{})
