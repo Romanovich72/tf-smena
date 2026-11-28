@@ -328,6 +328,45 @@ test('Ветка снижения веса Ильи раскрывает зам�
   assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/u);
 });
 
+test('Силовой сценарий Ильи сохраняет заметки, контекст переигрывания и отчёт смены',async()=>{
+  const app=loadApp(false,undefined,{practiceClient:'novice',practiceOpening:3});
+  const notes=()=>app.root.innerHTML.match(/<aside class="dossier">(.*?)<\/aside>/u)[1];
+  app.setIdentity('Марина','Люблино');
+  app.practice('novice');
+  assert.match(app.root.innerHTML,/Территория Фитнеса Люблино, менеджер Марина/u);
+  app.choose(); app.choose();
+  assert.match(notes(),/Фиксируйте важные детали/u);
+  app.choose();
+  assert.match(notes(),/Занимался дома с гантелями по видео/u);
+  assert.doesNotMatch(notes(),/мышечную массу|будет заниматься с другом/u);
+  app.choose();
+  assert.match(notes(),/набрать мышечную массу, стать сильнее и видеть прогресс/u);
+  assert.doesNotMatch(notes(),/будет заниматься с другом/u);
+  app.choose();
+  assert.match(notes(),/Возможно, будет заниматься с другом. Друг пока не определился/u);
+  for(let i=0;i<5;i++)app.choose();
+  const [record]=app.history();
+  assert.equal(record.contextIndex,3);
+  assert.equal(record.result.total,20);
+  assert.match(record.answers.at(-1).reply,/18:30 смогу.*Другу тоже предложу/u);
+  assert.equal(record.answers.at(-1).visitAgreement,'confirmed');
+  await app.click('#copy');
+  assert.match(app.clipboard(),/20\/20/u);
+  app.click('#replay');
+  assert.match(app.root.innerHTML,/сколько стоит карта\? Хочу попробовать заниматься в тренажёрном зале/u);
+  assert.match(notes(),/Фиксируйте важные детали/u);
+
+  app.click('home'); app.click('#shift');
+  for(let i=0;i<4;i++)app.completeCall();
+  const shift=app.history().slice(1);
+  assert.equal(new Set(shift.map(call=>call.clientId)).size,4);
+  assert.equal(shift.find(call=>call.clientId==='novice').contextIndex,3);
+  assert.match(app.root.innerHTML,/>80<small> \/ 80/);
+  await app.click('#copy');
+  assert.match(app.clipboard(),/Менеджер: Марина · Клуб: Люблино/u);
+  assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/u);
+});
+
 test('Таймер — отдельные события, один интервал и одна запись после обрыва', async()=>{
   const app=loadApp(true);
   app.click('#shift');
