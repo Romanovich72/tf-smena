@@ -39,8 +39,11 @@ function recoveryLead(clientId, failedCriterion, session) {
       return window.TRAINING_DATA.c6ReplyRecovery.route[clientId];
     if(/сервис|сопровожд|встреч|очеред|по шагам|первые упражнения|тренер/i.test(session.lastClientReply||''))return window.TRAINING_DATA.c6ReplyRecovery.service[clientId];
     if(/не одному|не одна|вместе|друг|подруг|супруг|коллег|близк/i.test(session.lastClientReply||''))return window.TRAINING_DATA.c6ReplyRecovery.companion[clientId];
-    if (session.revealedClueIds.includes('C4')) return window.TRAINING_DATA.c6NeedRecovery[clientId];
-    if (session.revealedClueIds.includes('C3')) return window.TRAINING_DATA.c6ExperienceRecovery[clientId];
+    const afterC6 = session.context.presentation?.afterC6;
+    const motive = session.revealedClueIds.includes('C4');
+    const experience = session.revealedClueIds.includes('C3');
+    if (motive) return afterC6?.[experience?'both':'motive'] ?? window.TRAINING_DATA.c6NeedRecovery[clientId];
+    if (experience) return afterC6?.experience ?? window.TRAINING_DATA.c6ExperienceRecovery[clientId];
     return window.TRAINING_DATA.c6GenericRecovery[clientId];
   }
   if (failedCriterion === 'C9') {
@@ -802,7 +805,7 @@ test('Цена на C2 появляется только после вопрос
         assert.ok(next.lastClientReply.endsWith(c.starts[opening].request));
         assert.equal(next.nameKnown, Boolean(option.asksGuestName));
         const standard = options.find(a => a.events.includes('C2'));
-        assert.equal(price.test(standard.text), opening === 0);
+        assert.equal(price.test(standard.text), price.test(c.starts[opening].request));
         if (opening === 1) assert.match(standard.text, /Спасибо.*подобрать формат.*пару коротких вопросов\?/u);
         for (const miss of options.filter(a => !a.events.length)) {
           const after = TrainingEngine.choose(next, miss);
@@ -849,7 +852,7 @@ test('Штраф −8 учитывает сумму, этап и число ра
   }
 });
 
-test('C1: 32 сочетания приветствия и стартового запроса', () => {
+test('C1: сочетания приветствия и стартового запроса для всех контекстов', () => {
   const names = {analyst:'Алексей',driver:'Максим',woman:'Елена',novice:'Илья'};
   for (const client of clients) {
     for (const [opening] of client.starts.entries()) {
@@ -873,8 +876,9 @@ test('C1: 32 сочетания приветствия и стартового �
         assert.equal(answer.events.includes('C1'), fullGreeting);
         assert.equal(TrainingEngine.result(next).scores.C1, 0);
         assert.equal(c2.criterion, 'C2');
-        assert.equal(/цен[еу]|стоимост/iu.test(c2.answers.find(a => a.events.includes('C2')).text), opening === 0);
-        if (asksName && opening === 0) {
+        const priceRequested = /стоимост|сколько(?: у вас)? стоит/iu.test(session.context.request);
+        assert.equal(/цен[еу]|стоимост/iu.test(c2.answers.find(a => a.events.includes('C2')).text), priceRequested);
+        if (asksName && priceRequested) {
           assert.ok(c2.answers.find(a => a.events.includes('C2')).text.includes(name));
         }
         let continuing = next;
@@ -930,7 +934,7 @@ test('C1 оценивает обращения в отдельных выбра�
   assert.equal(TrainingEngine.result(unnamed).scores.C1, 0);
 });
 
-test('C6 сохраняет четыре состояния раскрытия во всех восьми контекстах', () => {
+test('C6 сохраняет четыре состояния раскрытия во всех контекстах', () => {
   const data = window.TRAINING_DATA;
   const recap = {
     analyst: [/раньше.*тесно/i, /плавать в своём темпе.*спину/i],
@@ -943,6 +947,14 @@ test('C6 сохраняет четыре состояния раскрытия �
 
   for (const client of clients) {
     for (const [opening] of client.starts.entries()) {
+      const presentation = client.starts[opening].presentation;
+      const family = presentation?.company;
+      const strength = presentation && !family;
+      const facts = family
+        ? [/из-за семейного графика.*оставили зал/i, /хотите вернуться без разъездов/i]
+        : strength
+        ? [/раньше.*ждать стойку/i, /вернуть силу и выносливость/i]
+        : recap[client.id];
       for (const missed of [[], ['C3'], ['C4'], ['C3','C4']]) {
         let session = TrainingEngine.start(client, 'practice', opening);
         while (TrainingEngine.options(session).criterion !== 'C6') {
@@ -973,17 +985,38 @@ test('C6 сохраняет четыре состояния раскрытия �
         if (missed.length === 0) {
           const standard = standards[0];
           const summary = standard.text.split('. ')[0];
-          for (const fact of recap[client.id]) assert.match(summary, fact);
+          for (const fact of facts) assert.match(summary, fact);
           assert.equal(standard.companionContext, true);
-          assert.ok(standard.text.endsWith(data.c6CompanionTail[client.id] + '?'));
+          if (family) assert.match(standard.text, /сын.*школ[ае] плавания.*технику с тренером/iu);
+          else assert.ok(standard.text.endsWith(data.c6CompanionTail[client.id] + '?'));
           const lengths = answers.map(a => a.text.length);
           assert.ok(Math.max(...lengths) / Math.min(...lengths) <= 1.5);
           if (standard.text.length === Math.max(...lengths)) longestStandards++;
         } else if (missed.length === 1) {
-          const unknown = recap[client.id][missed[0] === 'C3' ? 0 : 1];
+          const unknown = facts[missed[0] === 'C3' ? 0 : 1];
           assert.ok(answers.every(a => !unknown.test(a.text)));
         } else {
           assert.ok(answers.every(a => !/(бассейн|спин|выносливост)/iu.test(a.text)));
+        }
+
+        if (strength) {
+          const pool = /бассейн|плаван|спин|термальн/iu;
+          const privateExperience = /занят[а-яё]* стойк|стойк[а-яё]* занят|собственным весом/iu;
+          const privateMotive = /выносливост|после перерыва|вернуть силу/iu;
+          assert.ok(answers.every(a => !pool.test(a.text+' '+a.reply)));
+          if (missed.length === 2) assert.ok(answers.every(a => !/Hammer Strength|Concept2/iu.test(a.text)));
+          else assert.match(standards[0].text, /Life Fitness.*функциональн/iu);
+          let call = session;
+          while (!call.done) {
+            const stage = TrainingEngine.options(call);
+            assert.ok(stage.answers.every(a => !pool.test(a.text+' '+a.reply)));
+            if (missed.includes('C3')) assert.ok(stage.answers.every(a => !privateExperience.test(a.text)));
+            if (missed.includes('C4')) assert.ok(stage.answers.every(a => !privateMotive.test(a.text)));
+            const answer = stage.answers.find(a => a.events.includes(stage.criterion))
+              ?? stage.answers.find(a => a.id.endsWith('-C6-list'));
+            call = TrainingEngine.choose(call, answer);
+          }
+          assert.equal(TrainingEngine.result(call).total, [20,18,14][missed.length]);
         }
 
         const withoutName = TrainingEngine.options({...session, nameKnown:false});
@@ -999,7 +1032,7 @@ test('C6 сохраняет четыре состояния раскрытия �
         const next = TrainingEngine.choose(recovering, missedC5);
         const standard = TrainingEngine.options(next).answers.find(a => a.events.includes('C6'));
         assert.equal(standard.recoveryFrom, 'C5');
-        for (const fact of recap[client.id]) assert.match(standard.text.split('. ')[0], fact);
+        for (const fact of facts) assert.match(standard.text.split('. ')[0], fact);
         const lead = recoveryLead(client.id, 'C5', next);
         assert.ok(Object.values(data.c5RecoveryCopy[client.id]).includes(lead));
         assert.equal(standard.text.split(lead).length, 2);
@@ -1011,6 +1044,110 @@ test('C6 сохраняет четыре состояния раскрытия �
     }
   }
   assert.ok(longestStandards <= 4, 'the standard is not consistently the longest choice');
+});
+
+test('Семейный Алексей выпадает случайно, а восемь сочетаний C3–C5 сохраняют границы известных фактов', () => {
+  const analyst = clients.find(client => client.id === 'analyst');
+  assert.equal(clients.length,4);
+  assert.equal(analyst.starts.length,4);
+  const family = analyst.starts[3];
+  const random = Math.random;
+  try {
+    for (let index=0; index<4; index++) {
+      Math.random=()=>(index+0.5)/4;
+      assert.equal(TrainingEngine.start(analyst).context,analyst.starts[index]);
+    }
+  } finally {
+    Math.random=random;
+  }
+
+  const childDetails = /(?<![а-яё])сын(?:а|у|ом)?(?![а-яё])|восемь лет|8 лет|плаван|бассейн|после школы/iu;
+  const notFamily = /супруг|термальн|морск.{0,10}вод|спин/iu;
+  const prerequisites = ['C3','C4','C5'];
+  for (let mask=0; mask<8; mask++) {
+    const missed=prerequisites.filter((_,index)=>mask&(1<<index));
+    let call=TrainingEngine.start(analyst,'practice',3);
+    while (!call.done) {
+      const {criterion,answers}=TrainingEngine.options(call);
+      const best=answers.find(a=>a.events.includes(criterion));
+      assert.equal(answers.length,4);
+      for (const answer of answers) {
+        assert.match(answer.text,/\?$/u);
+        assert.doesNotMatch(answer.text+' '+answer.reply,notFamily);
+        if (!call.revealedClueIds.includes('C5')) {
+          assert.doesNotMatch(answer.text,childDetails);
+          if (criterion!=='C5'||!answer.events.includes('C5')) assert.doesNotMatch(answer.reply,childDetails);
+        }
+        if (criterion==='C6') {
+          const next=TrainingEngine.choose(call,answer);
+          assert.equal(TrainingEngine.score(next).C6,answer.events.includes('C6')?2:0);
+          assert.equal(next.trust-call.trust,answer.delta-(next.earlyPriceLeak?8:0));
+          if (!next.done && !answer.events.includes('C6')) {
+            const recovery=TrainingEngine.options(next);
+            assert.equal(recovery.criterion,'C9');
+            assert.ok(recovery.answers.every(a=>a.recoveryFrom==='C6'));
+            if (missed.includes('C5')) assert.ok(recovery.answers.every(a=>!childDetails.test(a.text)));
+          }
+        }
+      }
+      if (criterion==='C6' && !best) assert.ok(missed.includes('C3')&&missed.includes('C4'));
+      if (criterion==='C5') assert.match(best.text,/Вы упомянули ребёнка/u);
+      if (criterion==='C6' && best && !missed.includes('C5')) assert.match(best.text,/школ[ае] плавания.*технику с тренером/u);
+      if (criterion==='C6' && missed.length===0) {
+        for (const [pattern, events, trust, rough] of [
+          [/отрабатывать технику/u, ['C6'], 3, false],
+          [/выбрать аквакомплекс/u, [], -18, true],
+          [/оснащение зала и детские программы/u, [], 0, false],
+          [/Могу отправить расписание/u, [], -2, false]
+        ]) {
+          const answer=answers.find(a=>pattern.test(a.text));
+          assert.ok(answer);
+          assert.deepEqual([answer.events,answer.delta,answer.rough],[events,trust,rough]);
+          assert.equal(TrainingEngine.choose(call,answer).earlyPriceLeak,false);
+        }
+        assert.ok(best.text.length<Math.max(...answers.map(a=>a.text.length)));
+      }
+      if (criterion==='C6' && best && missed.includes('C4')) assert.doesNotMatch(best.text,/без разъездов|вернуться к занятиям/u);
+      if (criterion==='C6' && best && missed.includes('C3')) assert.doesNotMatch(best.text,/семейный график|семейного графика/u);
+      if (criterion==='C9') assert.doesNotMatch(best.text,/\b\d{1,2}:\d{2}\b/u);
+      if (criterion==='C7') {
+        const [value, price] = best.text.split('При карте на 12 месяцев');
+        assert.match(value,/на встрече.*(?:час|время)/iu);
+        assert.match(price,/в среднем от 4 000 ₽ в месяц.*за год или помесячный вариант\?$/u);
+        if (missed.includes('C4')) assert.doesNotMatch(value,/вернуться|без лишних поездок/u);
+        assert.match(best.reply,/Помесячно мне удобнее.*внести сначала.*списывать оплату\?/u);
+        const payment=TrainingEngine.options(TrainingEngine.choose(call,best)).answers.find(a=>a.events.includes('C8'));
+        assert.match(payment.text,/вступительным взносом и ежемесячным автосписанием/u);
+      }
+      if (criterion==='C10') {
+        assert.ok(!call.answers.some(a=>a.visitAgreement));
+        assert.match(best.text,/встретить вас лично у входа.*WhatsApp — сможете заглянуть завтра в 18:30[^?]*\?$/u);
+        assert.match(best.reply,/^Да, завтра в 18:30 смогу\./u);
+        assert.equal(TrainingEngine.choose(call,best).answers.at(-1).visitAgreement,'confirmed');
+        assert.ok(answers.filter(a=>a!==best).every(a=>!a.visitAgreement));
+      }
+      const answer=missed.includes(criterion)?answers.find(a=>a.id.endsWith('-2')):
+        best??answers.find(a=>a.id.endsWith('-C6-list'));
+      call=TrainingEngine.choose(call,answer);
+    }
+    const result=TrainingEngine.result(call);
+    const blind=missed.includes('C3')&&missed.includes('C4');
+    assert.equal(result.total,20-2*(missed.length+Number(blind)));
+    assert.equal(result.passed,!missed.includes('C4'));
+    assert.equal(result.outcome,result.passed?'iron':'cold');
+    assert.equal(call.context,family);
+  }
+
+  let neutral=TrainingEngine.start(analyst,'practice',3);
+  const greeting=TrainingEngine.options(neutral).answers.find(a=>a.events.includes('C1'));
+  neutral=TrainingEngine.choose(neutral,{...greeting,reply:'Хотел бы узнать об условиях.'});
+  while (TrainingEngine.options(neutral).criterion!=='C5') {
+    const {criterion,answers}=TrainingEngine.options(neutral);
+    neutral=TrainingEngine.choose(neutral,answers.find(a=>a.events.includes(criterion)));
+  }
+  const neutralC5=TrainingEngine.options(neutral).answers.find(a=>a.events.includes('C5'));
+  assert.match(neutralC5.text,/для себя или кто-то из близких/u);
+  assert.doesNotMatch(neutralC5.text,/ребёнка|Алексей/u);
 });
 
 test('Фактическое согласие на визит и зачёт звонка определяются отдельно', () => {

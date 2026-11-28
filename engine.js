@@ -26,10 +26,13 @@ window.TrainingEngine = (() => {
     const step=session.context.steps?.[session.step];
     if(!step)return null;
     const [criterion,stepPrompt,stepAnswers]=step;
+    const presentation=session.context.presentation;
     const clues=clueIdsFor(session);
     const need=clues.has('C3')
       ? (clues.has('C4')?'both':'experience')
       : (clues.has('C4')?'motive':'blind');
+    const company=clues.has('C5')?presentation?.company:undefined;
+    const fullPresentation=need==='both'?company:undefined;
     const companyDisclosed=/(^|[^а-яё])(?:супруг(?:а|у|ом|е|ой)?|муж(?:а|у|ем)?|жен(?:а|у|ой|е)?|коллег(?:а|у|ой|и|ами)?|друг(?:а|у|ом|е|ьями)?|подруг(?:а|у|ой|и|ами)?|с семь(?:ёй|е|ёй))(?=$|[^а-яё])/i.test(session.lastClientReply||'');
     let prompt=stepPrompt,answers=stepAnswers;
     if(criterion==='C2' && !/(?:сколько(?: у вас)? стоит|стоимост[ьи]|по цене|цена|цену|почём)/iu.test(session.lastClientReply)){
@@ -40,9 +43,14 @@ window.TrainingEngine = (() => {
       });
     }
     if(criterion==='C4'){
-      const context=window.TRAINING_DATA.c4Context?.[session.clientId];
+      const context=presentation?.c4Context??window.TRAINING_DATA.c4Context?.[session.clientId];
       const variant=clues.has('C3')?context?.afterExperience:context?.closed;
       if(variant){prompt=variant.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:variant.choices[index]??answer.text}))}
+    }
+    if(criterion==='C5'&&presentation?.companyQuestion){
+      const {mentioned,text}=presentation.companyQuestion;
+      if(session.answers.some(answer=>mentioned.test(answer.reply)))
+        answers=stepAnswers.map(answer=>answer.events.includes('C5')?{...answer,text}:answer);
     }
     if(criterion==='C7'&&need==='blind'){
       const context=window.TRAINING_DATA.c7Context?.[session.clientId];
@@ -53,8 +61,8 @@ window.TrainingEngine = (() => {
       if(blind){prompt=blind.prompt;answers=blind.answers}
     }
     if(criterion==='C6'&&(clues.has('C3')||clues.has('C4'))){
-      const choices=window.TRAINING_DATA.knownC6Choices?.[session.clientId]?.[need==='both'?'both':'partial'];
-      const reactions=window.TRAINING_DATA.knownC6Replies?.[session.clientId];
+      const choices=fullPresentation?.choices??presentation?.choices??window.TRAINING_DATA.knownC6Choices?.[session.clientId]?.[need==='both'?'both':'partial'];
+      const reactions=fullPresentation?.replies??presentation?.replies??window.TRAINING_DATA.knownC6Replies?.[session.clientId];
       if(choices)answers=answers.map((answer,index)=>({...answer,text:choices[index]??answer.text,reply:reactions?.[index]??answer.reply}));
     }
     if(criterion==='C9'&&!clues.has('C3')&&!clues.has('C4')){
@@ -62,7 +70,7 @@ window.TrainingEngine = (() => {
       if(closed){prompt=closed.prompt;answers=stepAnswers.map((answer,index)=>({...answer,text:closed.choices[index]??answer.text}))}
     }
 
-    const valueLine=window.TRAINING_DATA.valueDialogue[session.clientId]?.[need]?.[criterion];
+    const valueLine=(presentation?.value??window.TRAINING_DATA.valueDialogue[session.clientId])?.[need]?.[criterion];
     if(valueLine){
       answers=answers.map(answer=>answer.events.includes(criterion)?{...answer,text:valueLine}:answer);
       if(need!=='both')prompt={
@@ -71,8 +79,15 @@ window.TrainingEngine = (() => {
         C7:'Свяжите цену с тем, что рассказал гость, и предложите выбор оплаты.'
       }[criterion];
     }
+    const generalOffer=need==='blind'&&['C7','C9'].includes(criterion);
+    const companyTurn=criterion==='C6'?company?.c6[need]:generalOffer?undefined:company?.turns[criterion];
+    if(companyTurn){
+      answers=answers.map(answer=>answer.events.includes(criterion)?{
+        ...answer,...companyTurn,...(criterion==='C6'?{companionContext:true}:{})
+      }:answer);
+    }
     const recoveringC5=session.lastOutcome&&session.lastFailedCriterion==='C5'&&criterion==='C6';
-    if(criterion==='C6'&&companyDisclosed&&!recoveringC5){
+    if(criterion==='C6'&&!presentation?.company&&companyDisclosed&&!recoveringC5){
       const companyTail=window.TRAINING_DATA.c6CompanionTail?.[session.clientId];
       if(companyTail){
         const standardIndex=answers.findIndex(answer=>answer.events?.includes('C6'));
@@ -102,7 +117,7 @@ window.TrainingEngine = (() => {
       }
       const reopensExperience=criterion==='C4'&&session.lastFailedCriterion==='C3'&&/(хотел[аи]? сначала рассказать|не успел[аи]? рассказать|хотел[аи]? рассказать.*опыт|не рассказал[аи].*опыт|мешало заниматься раньше)/i.test(session.lastClientReply||'');
       if(reopensExperience){
-        const repair=window.TRAINING_DATA.c4ExperienceRecoveryChoices?.[session.clientId];
+        const repair=presentation?.experienceRepair??window.TRAINING_DATA.c4ExperienceRecoveryChoices?.[session.clientId];
         if(repair?.length===answers.length){
           answers=answers.map((answer,index)=>({...answer,text:repair[index].text,reply:repair[index].reply,recoveryFrom:session.lastFailedCriterion,recoveryOutcome:session.lastOutcome}));
           prompt=`${prompt} Учтите последнюю реплику клиента: «${session.lastClientReply}»`;
@@ -116,7 +131,7 @@ window.TrainingEngine = (() => {
         else if(/не одному|не одна|вместе|друг|подруг|супруг|коллег|близк/i.test(reply))recovery=window.TRAINING_DATA.c6ReplyRecovery?.companion?.[session.clientId]||recovery;
         else {
           const recoverySet=clues.has('C4')?window.TRAINING_DATA.c6NeedRecovery:clues.has('C3')?window.TRAINING_DATA.c6ExperienceRecovery:window.TRAINING_DATA.c6GenericRecovery;
-          recovery=recoverySet?.[session.clientId]||recovery;
+          recovery=presentation?.afterC6?.[need]??(recoverySet?.[session.clientId]||recovery);
         }
       }
       if(session.lastFailedCriterion==='C9'&&criterion==='C7'){

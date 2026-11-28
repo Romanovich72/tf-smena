@@ -66,6 +66,10 @@ function loadApp(pressure, storage = new Map([['tf-noir-pressure-v1', String(pre
   let stage;
   const options=env.TrainingEngine.options;
   env.TrainingEngine.options=session=>stage=options(session);
+  if (faults.practiceOpening !== undefined) {
+    const start=env.TrainingEngine.start;
+    env.TrainingEngine.start=(client,mode,index)=>start(client,mode,index??(client.id==='analyst'?faults.practiceOpening:null));
+  }
   const click=key=>node(key).onclick({preventDefault(){},currentTarget:node(key)});
   const choose=(kind='correct')=>{
     const index=stage.answers.findIndex(a=>typeof kind==='function'?kind(a):kind==='rough'?a.rough:kind==='correct'?a.events.includes(stage.criterion):!a.events.length&&!a.rough);
@@ -84,6 +88,62 @@ function loadApp(pressure, storage = new Map([['tf-noir-pressure-v1', String(pre
     completeCall(){for(let i=0;i<10;i++)choose()},
     practice(){click('#free');click('analyst')}};
 }
+
+test('Заметки в силовой ветке показывают только раскрытые факты и сохраняются при переигрывании',()=>{
+  const app=loadApp(false, undefined, {practiceOpening:2});
+  const notes=()=>app.root.innerHTML.match(/<aside class="dossier">(.*?)<\/aside>/u)[1];
+  app.practice();
+  app.choose();
+  app.choose();
+  assert.match(notes(),/Фиксируйте важные детали/u);
+  app.choose('soft'); // C3: do not reveal the experience.
+  assert.doesNotMatch(notes(),/стойк|бассейн|выносливость/u);
+  app.choose();
+  assert.match(notes(),/вернуть силу и постепенно набрать выносливость/u);
+  assert.doesNotMatch(notes(),/стойк|бассейн/u);
+  app.choose();
+  assert.match(app.root.innerHTML,/Life Fitness.*Concept2/u);
+  for(let move=0;move<5;move++)app.choose();
+  const [record]=app.history();
+  assert.equal(record.contextIndex,2);
+  assert.equal(record.result.total,18);
+  app.click('#replay');
+  assert.match(app.root.innerHTML,/выбираю между двумя клубами/u);
+  assert.match(notes(),/Фиксируйте важные детали/u);
+});
+
+test('Семейные заметки раскрываются по очереди, звонок повторяется, смена с ним даёт 80/80',async()=>{
+  const app=loadApp(false,undefined,{practiceOpening:3});
+  const notes=()=>app.root.innerHTML.match(/<aside class="dossier">(.*?)<\/aside>/u)[1];
+  app.practice();
+  app.choose(); app.choose();
+  assert.match(notes(),/Фиксируйте важные детали/u);
+  app.choose();
+  assert.match(notes(),/перестал из-за семейного графика/u);
+  assert.doesNotMatch(notes(),/без лишних разъездов|Сын 8 лет/u);
+  app.choose();
+  assert.match(notes(),/без лишних разъездов/u);
+  assert.doesNotMatch(notes(),/Сын 8 лет/u);
+  app.choose();
+  assert.match(notes(),/Сын 8 лет, интересуется плаванием/u);
+  assert.doesNotMatch(notes(),/супруг/u);
+  for(let i=0;i<5;i++)app.choose();
+  assert.equal(app.history()[0].contextIndex,3);
+  assert.equal(app.history()[0].result.total,20);
+  app.click('#replay');
+  assert.match(app.root.innerHTML,/Рассматриваю ваш фитнес-клуб/u);
+  assert.match(notes(),/Фиксируйте важные детали/u);
+
+  app.click('home');
+  app.click('#shift');
+  for(let i=0;i<4;i++)app.completeCall();
+  const shift=app.history().slice(1);
+  assert.equal(new Set(shift.map(record=>record.clientId)).size,4);
+  assert.equal(shift.find(record=>record.clientId==='analyst').contextIndex,3);
+  assert.match(app.root.innerHTML,/>80<small> \/ 80/);
+  await app.click('#copy');
+  assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/);
+});
 
 test('Таймер — отдельные события, один интервал и одна запись после обрыва', async()=>{
   const app=loadApp(true);
