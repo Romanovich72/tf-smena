@@ -22,7 +22,7 @@ function loadApp(pressure, storage = new Map([['tf-noir-pressure-v1', String(pre
     querySelector: node,
     querySelectorAll: selector => ({
       '[data-go]': [Object.assign(node('home'), {dataset:{go:'home'}}), Object.assign(node('profile'), {dataset:{go:'profile'}})],
-      '[data-client]': ['analyst','driver','woman'].map(client=>Object.assign(node(client), {dataset:{client}})),
+      '[data-client]': ['analyst','driver','woman','novice'].map(client=>Object.assign(node(client), {dataset:{client}})),
       '[data-filter]': ['all','shift','practice'].map(filter=>Object.assign(node('filter-'+filter), {dataset:{filter}})),
       '.choices .answer': [0,1,2,3].map(node)
     })[selector] || []
@@ -285,6 +285,43 @@ test('Персональный тренинг Елены раскрывает з
   const shift=app.history().slice(1);
   assert.equal(new Set(shift.map(call=>call.clientId)).size,4);
   assert.equal(shift.find(call=>call.clientId==='woman').contextIndex,3);
+  assert.match(app.root.innerHTML,/>80<small> \/ 80/);
+  await app.click('#copy');
+  assert.match(app.clipboard(),/Менеджер: Марина · Клуб: Люблино/u);
+  assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/u);
+});
+
+test('Ветка снижения веса Ильи раскрывает заметки, переигрывается и входит в смену 80/80',async()=>{
+  const app=loadApp(false,undefined,{practiceClient:'novice',practiceOpening:2});
+  const notes=()=>app.root.innerHTML.match(/<aside class="dossier">(.*?)<\/aside>/u)[1];
+  app.setIdentity('Марина','Люблино');
+  app.practice('novice');
+  assert.match(app.root.innerHTML,/Территория Фитнеса Люблино, менеджер Марина/u);
+  app.choose(); app.choose();
+  assert.match(notes(),/Фиксируйте важные детали/u);
+  app.choose();
+  assert.match(notes(),/Пробовал заниматься дома/u);
+  assert.doesNotMatch(notes(),/снизить вес|посещать клуб один/u);
+  app.choose();
+  assert.match(notes(),/Хочет снизить вес, стать выносливее и энергичнее/u);
+  assert.doesNotMatch(notes(),/посещать клуб один/u);
+  app.choose();
+  assert.match(notes(),/Планирует посещать клуб один/u);
+  for(let i=0;i<5;i++)app.choose();
+  const [record]=app.history();
+  assert.equal(record.contextIndex,2);
+  assert.equal(record.result.total,20);
+  assert.match(record.answers.at(-1).reply,/Да, завтра смогу\. В 18:30 удобно/u);
+  assert.equal(record.answers.at(-1).visitAgreement,'confirmed');
+  app.click('#replay');
+  assert.match(app.root.innerHTML,/Я раньше особо не занимался/u);
+  assert.match(notes(),/Фиксируйте важные детали/u);
+
+  app.click('home'); app.click('#shift');
+  for(let i=0;i<4;i++)app.completeCall();
+  const shift=app.history().slice(1);
+  assert.equal(new Set(shift.map(call=>call.clientId)).size,4);
+  assert.equal(shift.find(call=>call.clientId==='novice').contextIndex,2);
   assert.match(app.root.innerHTML,/>80<small> \/ 80/);
   await app.click('#copy');
   assert.match(app.clipboard(),/Менеджер: Марина · Клуб: Люблино/u);

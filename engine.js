@@ -64,7 +64,12 @@ window.TrainingEngine = (() => {
     if(criterion==='C6'&&(clues.has('C3')||clues.has('C4'))){
       const choices=fullPresentation?.choices??presentation?.choices??window.TRAINING_DATA.knownC6Choices?.[session.clientId]?.[need==='both'?'both':'partial'];
       const reactions=fullPresentation?.replies??presentation?.replies??window.TRAINING_DATA.knownC6Replies?.[session.clientId];
-      if(choices)answers=answers.map((answer,index)=>({...answer,text:choices[index]??answer.text,reply:reactions?.[index]??answer.reply}));
+      if(choices)answers=answers.map((answer,index)=>{
+        const choice=choices[index];
+        const text=typeof choice==='string'?choice:choice?.text;
+        return {...answer,text:text??answer.text,reply:reactions?.[index]??answer.reply,
+          delta:choice?.delta??answer.delta,rough:choice?.rough??answer.rough};
+      });
     }
     if(criterion==='C9'&&!clues.has('C3')&&!clues.has('C4')){
       const closed=presentation?.c9Closed??window.TRAINING_DATA.c9Closed?.[session.clientId];
