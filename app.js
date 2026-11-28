@@ -104,6 +104,7 @@
     playSound(res.outcome==='hangup'?'hangup':res.outcome==='iron'?'success':'click');
     const record={type:mode,clientId:client.id,clientName:client.name,date:new Date().toISOString(),result:res,outcome:res.outcome,trust:session.trust,earlyPriceLeak:session.earlyPriceLeak,answers:session.answers,contextIndex:session.contextIndex,contextPrompt:session.context.prompt};
     record.identity=session.identity;
+    if(res.scores.C1===0)record.nameKnown=session.nameKnown;
     if(mode==='shift'){
       record.shiftId=activeShift.id;
       record.shiftCallIndex=session.shiftIndex+1;
@@ -120,7 +121,28 @@
     render();
   }
   function outcomeLabel(o){return ({iron:'Железная запись',cold:'Визит согласован',think:'Ушёл думать / в мессенджер',hangup:'Слив · клиент бросил трубку'})[o]||'Звонок завершён'}
-  function review(record,isFullShift=false){const missed=D.checklist.filter(c=>record.result.scores[c.id]===0);const timing=TrainingReport.timeoutSummary(record);const note=timing?`<p class="note">${isFullShift?`<b>${esc(record.clientName)}</b> · `:''}${esc(timing)}</p>`:'';if(!missed.length)return note;return note+`<details class="miss-review"><summary>${isFullShift?`${esc(record.clientName)} · `:''}${missed.length} критериев без баллов — раскрыть разбор</summary>${missed.map(c=>{const pickedIdentity=record.identity||{},picked=(record.answers||[]).find(a=>a.criterion===c.id||a.id?.includes(`-${c.id}-`));const quote=String(c.quote||'').trim().replace(/^[«“”"]/, '').replace(/[»“”"]+[.!?…]*$/, '');return `<article class="review-card"><h3>${c.id} · ${esc(c.title)} <small>0/2</small></h3><p><b>Что ты выбрал:</b> ${picked?esc(personalize(picked.text,pickedIdentity)):'Этап не достигнут — звонок завершился до этого шага.'}</p>${picked?.earlyLeakTriggered?`<div class="stopword-feedback"><b>РАННЯЯ УТЕЧКА · ДОВЕРИЕ −8</b><p>Менеджер назвал годовую сумму или перешёл к стоимости и презентации до раскрытия двух улик. Клиент сильнее сопротивляется стоимости и хуже соглашается на визит.</p></div>`:''}${picked?.stopword?`<div class="stopword-feedback"><b>СТОП-ФРАЗА</b> · «${esc(picked.stopword.phrase)}»<p>Замена по стандарту: <q>${esc(picked.stopword.quote)}</q></p></div>`:''}<p><b>Почему это ошибка:</b> ${esc(c.rule)}</p><p><b>Эталон из методички:</b> <span class="review-quote">«${esc(quote)}»</span></p></article>`}).join('')}</details>`}
+  function review(record,isFullShift=false){
+    const missed=D.checklist.filter(c=>record.result.scores[c.id]===0);
+    const timing=TrainingReport.timeoutSummary(record);
+    const note=timing?`<p class="note">${isFullShift?`<b>${esc(record.clientName)}</b> · `:''}${esc(timing)}</p>`:'';
+    if(!missed.length)return note;
+    const answers=Array.isArray(record.answers)?record.answers:[];
+    const cards=missed.map(c=>{
+      const c1=c.id==='C1'?TrainingReport.c1Feedback(record):null;
+      const picked=c1?.greetingCompleted?answers[0]
+        :answers.find(a=>a?.criterion===c.id||(typeof a?.id==='string'&&a.id.includes(`-${c.id}-`)));
+      const label=c1?.greetingCompleted?'Приветствие в звонке:':'Что ты выбрал:';
+      const pickedText=picked?.text?esc(personalize(picked.text,record.identity||{}))
+        :c1?'Выбранная реплика недоступна.':'Этап не достигнут — звонок завершился до этого шага.';
+      const quote=String(c.quote||'').trim().replace(/^[«“”"]/, '').replace(/[»“”"]+[.!?…]*$/, '');
+      const example=`<p><b>Эталон из методички:</b> <span class="review-quote">«${esc(quote)}»</span></p>`;
+      const explanation=c1
+        ? `<p><b>Причина незачёта:</b> ${esc(c1.explanation)}</p>${c1.advice?`<p><b>Что улучшить:</b> ${esc(c1.advice)}</p>`:''}${c1.greetingCompleted===false?example:''}`
+        : `<p><b>Почему это ошибка:</b> ${esc(c.rule)}</p>${example}`;
+      return `<article class="review-card"><h3>${c.id} · ${esc(c.title)} <small>0/2</small></h3><p><b>${label}</b> ${pickedText}</p>${picked?.earlyLeakTriggered?`<div class="stopword-feedback"><b>РАННЯЯ УТЕЧКА · ДОВЕРИЕ −8</b><p>Менеджер назвал годовую сумму или перешёл к стоимости и презентации до раскрытия двух улик. Клиент сильнее сопротивляется стоимости и хуже соглашается на визит.</p></div>`:''}${picked?.stopword?`<div class="stopword-feedback"><b>СТОП-ФРАЗА</b> · «${esc(picked.stopword.phrase)}»<p>Замена по стандарту: <q>${esc(picked.stopword.quote)}</q></p></div>`:''}${explanation}</article>`;
+    }).join('');
+    return note+`<details class="miss-review"><summary>${isFullShift?`${esc(record.clientName)} · `:''}${missed.length} критериев без баллов — раскрыть разбор</summary>${cards}</details>`;
+  }
   function replay(record){
     mode='practice';
     const replayClient=D.clients.find(c=>c.id===record.clientId)||client;
@@ -184,7 +206,8 @@
       `Менеджер: ${reportIdentity.name||'не указан'} · Клуб: ${reportIdentity.club||'не указан'}`,
       ...shiftCalls.map(call=>{
         const timing=TrainingReport.timeoutSummary(call);
-        return `${call.clientName}: ${call.result.total}/${callMax} · ${outcomeLabel(call.outcome)} · ${call.result.passed?'зачтено':'не зачтено'} · ${status(call)}${timing?` · ${timing}`:''}`;
+        const c1=TrainingReport.c1Feedback(call);
+        return `${call.clientName}: ${call.result.total}/${callMax} · ${outcomeLabel(call.outcome)} · ${call.result.passed?'зачтено':'не зачтено'} · ${status(call)}${c1?` · C1: ${c1.explanation}`:''}${timing?` · ${timing}`:''}`;
       }),
       `Итого ${res.total}/${max} · ${res.passed?'смена зачтена':'смена не зачтена'}`
     ]:[TrainingReport.text(record),status(record)];

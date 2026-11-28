@@ -237,7 +237,7 @@ test('Групповые занятия Елены раскрывают заме
   const [record]=app.history();
   assert.equal(record.contextIndex,2);
   assert.equal(record.result.total,20);
-  assert.match(record.answers.at(-1).reply,/^Да, в 19:00 удобно\. Уточню у подруги/u);
+  assert.match(record.answers.at(-1).reply,/^Да, завтра в 19:00 удобно\. Уточню у подруги/u);
   assert.equal(record.answers.at(-1).visitAgreement,'confirmed');
   app.click('#replay');
   assert.match(app.root.innerHTML,/Хотела бы уточнить, какие групповые программы/u);
@@ -365,6 +365,117 @@ test('Силовой сценарий Ильи сохраняет заметки
   await app.click('#copy');
   assert.match(app.clipboard(),/Менеджер: Марина · Клуб: Люблино/u);
   assert.match(app.clipboard(),/Итого 80\/80 · смена зачтена/u);
+});
+
+const c1Card=app=>app.root.innerHTML.match(/<h3>C1 · [\s\S]*?<\/article>/u)?.[0];
+
+test('Правильное приветствие остаётся контекстом при одном обращении у Максима и Елены',async()=>{
+  for(const clientId of ['driver','woman']){
+    const app=loadApp(false,undefined,{practiceClient:clientId,practiceOpening:1});
+    app.practice(clientId);
+    for(let i=0;i<10;i++)app.choose(i===3?a=>a.id.endsWith('-C4-2'):'correct');
+    const [record]=app.history();
+    assert.equal(record.result.scores.C1,0);
+    assert.equal(record.nameKnown,true);
+    assert.equal(record.answers.filter(a=>a.addressedGuestByName).length,1);
+    const card=c1Card(app);
+    assert.match(card,/Приветствие в звонке:<\/b> Территория Фитнеса.*менеджер Анастасия/u);
+    assert.match(card,/Корпоративное приветствие выполнено\. Имя клиента получено\. Обращений по имени: 1 из 2 необходимых\./u);
+    assert.match(card,/Используй имя клиента естественно в ходе разговора/u);
+    assert.doesNotMatch(card,/Почему это ошибка|Эталон из методички/u);
+    await app.click('#copy');
+    assert.match(app.clipboard(),/C1 Приветствие и имя: 0\/2\n  Корпоративное приветствие выполнено\..*Обращений по имени: 1 из 2 необходимых/u);
+    assert.doesNotMatch(app.clipboard(),/C1 Приветствие и имя: 0\/2\n  Эталон:/u);
+  }
+});
+
+test('C1 различает незапрошенное имя и недочёты представления',()=>{
+  for(const [variant,omission,askedName] of [
+    [1,'менеджер не назвал клуб и не представился',false],
+    [2,'менеджер не представился',true],
+    [3,'менеджер не назвал клуб',false]
+  ]){
+    const app=loadApp(false,undefined,{practiceOpening:1});
+    app.practice();
+    app.choose(a=>a.id===`analyst-C1-${variant}`);
+    for(let i=1;i<10;i++)app.choose();
+    const [record]=app.history();
+    assert.equal(record.result.scores.C1,0);
+    assert.equal(record.nameKnown,askedName);
+    const card=c1Card(app);
+    assert.ok(card.includes(`Корпоративное приветствие выполнено не полностью: ${omission}.`));
+    if(askedName){
+      assert.match(card,/Имя клиента получено/u);
+      assert.doesNotMatch(card,/Имя клиента не было запрошено|Обращений по имени:/u);
+    }else{
+      assert.match(card,/Имя клиента не было запрошено/u);
+      assert.doesNotMatch(card,/Обращений по имени:|Имя клиента не было получено/u);
+    }
+  }
+});
+
+test('C1 с нулём обращений объясняется, а при зачёте предупреждения нет',()=>{
+  const timed=loadApp(true,undefined,{practiceOpening:1});
+  timed.practice();
+  timed.choose();
+  timed.tick(33*5);
+  const [incomplete]=timed.history();
+  assert.equal(incomplete.answers.length,1);
+  assert.equal(incomplete.result.scores.C1,0);
+  assert.equal(incomplete.nameKnown,true);
+  assert.match(c1Card(timed),/Имя клиента получено\. Обращений по имени: 0 из 2/u);
+
+  const app=loadApp(false,undefined,{practiceOpening:1});
+  app.practice();
+  app.completeCall();
+  const [record]=app.history();
+  assert.equal(record.result.scores.C1,2);
+  assert.ok(record.answers.filter(a=>a.addressedGuestByName).length>=2);
+  assert.equal(c1Card(app),undefined);
+  assert.equal(app.report.c1Feedback(record),null);
+});
+
+test('C1 в старых отчётах сообщает о недостающих данных без пересчёта истории',()=>{
+  const summaries=[
+    {type:'practice',clientName:'Максим',result:{scores:{C1:0},total:18}},
+    {type:'practice',clientName:'Елена',result:{scores:{C1:0},total:18},answers:[
+      {criterion:'C1',events:['C1'],asksGuestName:true,text:'Приветствие'},
+      {criterion:'C2',addressedGuestByName:true,text:'Выбранный ответ'}
+    ]},
+    {type:'practice',clientName:'Алексей',result:{scores:{C1:0},total:18},answers:[
+      {events:['C1'],asksGuestName:true,addressedGuestByName:false,text:'Приветствие'},
+      {addressedGuestByName:true,text:'Выбранный ответ'}
+    ]}
+  ];
+  const original=JSON.stringify(summaries);
+  const storage=new Map([['tf-noir-training-v1',original]]);
+  const app=loadApp(false,storage);
+  const [missing,partial,available]=app.report.read();
+  for(const summary of [missing,partial]){
+    const detail=app.report.c1Feedback(summary);
+    assert.match(detail.explanation,/Подробная причина незачёта C1 недоступна/u);
+    assert.match(app.report.text(summary),/C1 Приветствие и имя: 0\/2[\s\S]*Подробная причина незачёта C1 недоступна/u);
+    assert.doesNotMatch(detail.explanation,/Обращений по имени:|менеджер не представился/u);
+  }
+  assert.match(app.report.c1Feedback(available).explanation,/Корпоративное приветствие выполнено\. Имя клиента получено\. Обращений по имени: 1 из 2/u);
+  assert.equal(storage.get('tf-noir-training-v1'),original);
+});
+
+test('Смена показывает и копирует причину незачёта C1 отдельно для нужного клиента',async()=>{
+  const app=loadApp(false,undefined,{practiceClient:'driver',practiceOpening:1});
+  app.click('#shift');
+  for(let call=0;call<4;call++){
+    const isDriver=app.root.innerHTML.includes('ТОРОПЫГА ЗА РУЛЁМ');
+    for(let i=0;i<10;i++)app.choose(isDriver&&i===3?a=>a.id==='driver-C4-2':'correct');
+  }
+  assert.match(app.root.innerHTML,/76<small> \/ 80/u);
+  assert.match(c1Card(app),/Обращений по имени: 1 из 2 необходимых/u);
+  await app.click('#copy');
+  const lines=app.clipboard().split('\n');
+  const withExplanation=lines.filter(line=>line.includes('Обращений по имени'));
+  assert.equal(withExplanation.length,1);
+  assert.match(withExplanation[0],/^Торопыга за рулём: 16\/20.*C1: Корпоративное приветствие выполнено/u);
+  assert.match(lines.join('\n'),/Итого 76\/80 · смена не зачтена/u);
 });
 
 test('Таймер — отдельные события, один интервал и одна запись после обрыва', async()=>{

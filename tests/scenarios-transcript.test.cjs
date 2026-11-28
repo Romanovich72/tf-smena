@@ -1461,7 +1461,7 @@ test('Групповые занятия Елены учитывают раскр
         assert.ok(!call.answers.some(a=>a.visitAgreement));
         const time=missed.includes('C5')?'18:30':'19:00';
         assert.ok(best.text.endsWith(`завтра в ${time} удобно заглянуть?`));
-        assert.ok(best.reply.startsWith(`Да, в ${time} удобно.`));
+        assert.ok(best.reply.startsWith(`Да, завтра в ${time} удобно.`));
         if(!missed.includes('C5')) assert.match(best.reply,/Уточню у подруги, сможет ли она\./u);
         assert.equal(TrainingEngine.choose(call,best).answers.at(-1).visitAgreement,'confirmed');
         assert.ok(answers.filter(a=>a!==best).every(a=>!a.visitAgreement));
@@ -1570,7 +1570,7 @@ test('Персональный тренинг Елены разделяет ви
         assert.match(best.text,/обсудить подбор тренера без покупки пакета/u);
         if(missed.includes('C5')){
           assert.ok(best.text.endsWith('Завтра в 18:30 удобно заглянуть?'));
-          assert.match(best.reply,/^Да, в 18:30 удобно\./u);
+          assert.match(best.reply,/^Да, завтра в 18:30 удобно\./u);
         } else {
           assert.ok(best.text.endsWith('В понедельник в 19:00 удобно заглянуть?'));
           assert.match(best.reply,/^Да, в понедельник в 19:00 удобно\./u);
@@ -1791,6 +1791,77 @@ test('Илья обсуждает силовые занятия и отвеча�
     assert.equal(result.passed,!missed.includes('C4'));
     if(mask===0) assert.equal(call.trust,74);
   }
+});
+
+test('C10 сохраняет слоты и явно подтверждает встречу и WhatsApp во всех контекстах', () => {
+  const clues=['C3','C4','C5'];
+  const day=/завтра|в понедельник/iu;
+  const time=/(?<!\d)\d{1,2}:\d{2}(?!\d)/gu;
+  const permission=/(?:пришлите визитку в WhatsApp|номер привязан к WhatsApp|(?:в WhatsApp (?:пишите|можете написать)|напишите мне в WhatsApp|визитку можно отправить в WhatsApp) (?:на этот номер|сюда))/iu;
+  const expectedSlots={
+    analyst:['19:00','19:00','19:00','18:30'],
+    driver:['19:00','19:00','13:00','19:30'],
+    woman:['18:30','18:30','19:00','19:00'],
+    novice:['18:30','18:30','18:30','18:30']
+  };
+  let checked=0;
+  for(const client of clients){
+    for(const opening of client.starts.keys()){
+      for(let mask=0;mask<8;mask++) for(const nameKnown of [true,false]){
+        const missed=clues.filter((_,index)=>mask&(1<<index));
+        let call=TrainingEngine.start(client,'practice',opening);
+        while(TrainingEngine.options(call).criterion!=='C8'){
+          const {criterion,answers}=TrainingEngine.options(call);
+          const standard=answers.find(a=>a.events.includes(criterion));
+          const option=criterion==='C1'&&!nameKnown?answers.find(a=>!a.rough&&!a.asksGuestName)
+            :missed.includes(criterion)?answers.find(a=>a.id.endsWith('-2'))
+            :standard??answers.find(a=>a.id.endsWith('-C6-list'));
+          call=TrainingEngine.choose(call,option);
+          assert.equal(call.done,false);
+        }
+        assert.equal(call.nameKnown,nameKnown);
+        for(const payment of TrainingEngine.options(call).answers){
+          const next=TrainingEngine.choose(call,payment);
+          if(next.done) continue;
+          checked++;
+          const {criterion,answers}=TrainingEngine.options(next);
+          assert.equal(criterion,'C10');
+          const sorted=[...answers].sort((a,b)=>a.id.localeCompare(b.id));
+          assert.deepEqual(sorted.map(a=>[a.events,a.delta,a.rough,a.visitAgreement]),[
+            [['C10'],3,false,'confirmed'],[[],-18,true,undefined],[[],0,false,undefined],[[],-2,false,undefined]
+          ]);
+          const [best,...mistakes]=sorted;
+          assert.match(best.text,/^[^?]+\?$/u);
+          assert.match(best.text,/(?:лично встречу|встречу вас лично|встретить вас лично) (?:вас )?у входа/iu);
+          assert.match(best.text,/в течение (?:пяти|5) минут после звонка (?:пришлю|отправлю|отправить) визитку(?: и схему заезда)? в WhatsApp/iu);
+          if(!nameKnown) assert.ok(answers.every(a=>!/(?:Алексей|Максим|Елена|Илья),/u.test(a.text)));
+
+          let slot=expectedSlots[client.id][opening];
+          if(client.id==='driver'&&opening===2&&missed.includes('C4')) slot='10:30';
+          if(missed.includes('C5')&&((client.id==='driver'&&opening===3)||(client.id==='woman'&&opening>=2))) slot='18:30';
+          const date=client.id==='woman'&&opening===3&&!missed.includes('C5')?'в понедельник':'завтра';
+          assert.deepEqual(best.text.match(time),[slot]);
+          assert.equal(best.text.match(day)?.[0].toLowerCase(),date);
+          const consent=best.reply.match(permission);
+          assert.ok(consent,`${client.id}/${opening}: ${best.reply}`);
+          const visit=best.reply.slice(0,consent.index);
+          assert.match(visit,/^Да[,!]/u);
+          assert.doesNotMatch(visit,/если|не смогу|не подходит/iu);
+          assert.equal(visit.match(day)?.[0].toLowerCase(),date);
+          assert.deepEqual(visit.match(time),[slot]);
+
+          if(client.id==='woman'&&opening===2&&!missed.includes('C5')) assert.match(best.reply,/Уточню у подруги, сможет ли она\./u);
+          else if(client.id==='novice'&&opening===3&&!missed.includes('C5')) assert.match(best.reply,/Другу тоже предложу\./u);
+          else assert.doesNotMatch(best.reply,/подруг|другу|сын|коллег/iu);
+          assert.doesNotMatch(best.reply,/(?<![а-яё])мы (?:приедем|придём)|(?:друг|подруга|сын|коллега) (?:приедет|придёт|согласен|согласна)/iu);
+          assert.ok(mistakes.every(a=>!permission.test(a.reply)||!a.reply.match(day)||!a.reply.match(time)));
+          assert.ok(next.answers.every(a=>!a.visitAgreement));
+          assert.equal(TrainingEngine.choose(next,best).answers.at(-1).visitAgreement,'confirmed');
+        }
+      }
+    }
+  }
+  assert.equal(checked,1024);
 });
 
 test('Фактическое согласие на визит и зачёт звонка определяются отдельно', () => {
